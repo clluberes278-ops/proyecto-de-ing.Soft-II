@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
             periodo: p.periodo,
             fechaInicio: p.fecha_inicio,
             fechaFin: p.fecha_fin,
-            estado: p.estado
+            estado: bitAEstadoTexto(p.estado)
         }));
 
         res.json({ success: true, data: periodos });

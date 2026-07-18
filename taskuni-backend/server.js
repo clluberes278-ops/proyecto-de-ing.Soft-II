@@ -61,6 +61,25 @@ const config = {
 
 let pool;
 
+// ============================================================================
+// HELPERS: traducir estado entre bit (BD) y texto (frontend)
+// ============================================================================
+function estadoABit(valor) {
+    if (typeof valor === 'boolean') return valor ? 1 : 0;
+    if (typeof valor === 'number') return valor ? 1 : 0;
+    if (typeof valor === 'string') {
+        const v = valor.trim().toLowerCase();
+        return (v === 'activo' || v === 'activa' || v === '1' || v === 'true') ? 1 : 0;
+    }
+    return 1; // default: activo
+}
+
+function bitAEstadoTexto(bit, formaFemenina = false) {
+    const activo = formaFemenina ? 'Activa' : 'Activo';
+    const inactivo = formaFemenina ? 'Inactiva' : 'Inactivo';
+    return bit ? activo : inactivo;
+}
+
 async function initializeDatabase() {
     try {
         pool = new mssql.ConnectionPool(config);
@@ -131,7 +150,8 @@ app.get('/api/estudiantes/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const result = await pool.request()
-            .input('id', mssql.VarChar(20), id)
+            .input('id', mssql.Int, id)
+            .query('SELECT id_estudiante, matricula, nombre, correo, id_carrera, estado FROM Estudiante WHERE id_estudiante = @id');
         if (result.recordset.length === 0) {
             return res.status(404).json({ success: false, error: 'Estudiante no encontrado' });
         }
@@ -171,7 +191,7 @@ app.post('/api/estudiantes', async (req, res) => {
             .input('nombre', mssql.VarChar(100), nombre)
             .input('correo', mssql.VarChar(100), correo || null)
             .input('id_carrera', mssql.Int, carreraId)
-            .input('estado', mssql.Bit, estado !== undefined ? estado : 1)
+            .input('estado', mssql.Bit, estado !== undefined ? estadoABit(estado) : 1)
             .query(`
                 INSERT INTO Estudiante (matricula, nombre, correo, id_carrera, estado)
                 VALUES (@matricula, @nombre, @correo, @id_carrera, @estado);
@@ -198,7 +218,7 @@ app.put('/api/estudiantes/:id', async (req, res) => {
             .input('id', mssql.Int, id)
             .input('nombre', mssql.VarChar(100), nombre)
             .input('correo', mssql.VarChar(100), correo)
-            .input('estado', mssql.Bit, estado)
+            .input('estado', mssql.Bit, estadoABit(estado))
             .query(`
                 UPDATE Estudiante
                 SET nombre = @nombre, correo = @correo, estado = @estado
@@ -249,7 +269,8 @@ app.get('/api/asignaturas', async (req, res) => {
             FROM Asignatura
             ORDER BY nombre_asignatura
         `);
-        res.json({ success: true, data: result.recordset });
+        const asignaturas = result.recordset.map(a => ({ ...a, estado: bitAEstadoTexto(a.estado, true) }));
+        res.json({ success: true, data: asignaturas });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -267,7 +288,7 @@ app.post('/api/asignaturas', async (req, res) => {
             .input('nombre', mssql.VarChar(100), nombre)
             .input('creditos', mssql.Int, creditos)
             .input('profesor', mssql.VarChar(20), profesor || null)
-            .input('estado', mssql.VarChar(20), estado || 'Activa')
+            .input('estado', mssql.Bit, estadoABit(estado || 'Activa'))
             .query(`
                 INSERT INTO Asignatura (codigo_asignatura, nombre_asignatura, creditos, id_profesor, estado)
                 VALUES (@codigo, @nombre, @creditos, @profesor, @estado)
@@ -294,7 +315,8 @@ app.get('/api/carreras', async (req, res) => {
             FROM Carrera
             ORDER BY nombre_carrera
         `);
-        res.json({ success: true, data: result.recordset });
+        const carreras = result.recordset.map(c => ({ ...c, estado: bitAEstadoTexto(c.estado, true) }));
+        res.json({ success: true, data: carreras });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -345,7 +367,7 @@ app.get('/api/periodos', async (req, res) => {
             periodo: p.periodo,
             fechaInicio: p.fecha_inicio,
             fechaFin: p.fecha_fin,
-            estado: p.estado
+            estado: bitAEstadoTexto(p.estado)
         }));
         res.json({ success: true, data: periodos });
     } catch (error) {
@@ -367,7 +389,7 @@ app.post('/api/periodos', async (req, res) => {
             .input('periodo', mssql.VarChar(20), periodo)
             .input('fechaInicio', mssql.Date, fechaInicio)
             .input('fechaFin', mssql.Date, fechaFin)
-            .input('estado', mssql.VarChar(20), estado || 'Activo')
+            .input('estado', mssql.Bit, estadoABit(estado || 'Activo'))
             .query(`
                 INSERT INTO Periodo (periodo, fecha_inicio, fecha_fin, estado)
                 VALUES (@periodo, @fechaInicio, @fechaFin, @estado)
@@ -387,7 +409,7 @@ app.get('/api/secciones', async (req, res) => {
         const result = await pool.request().query(`
             SELECT 
                 s.id_seccion AS id,
-                s.numero,
+                s.numero_seccion AS numero,
                 s.id_asignatura,
                 s.id_profesor,
                 s.id_periodo,
@@ -420,13 +442,13 @@ app.post('/api/secciones', async (req, res) => {
         const idPeriodo = periodoResult.recordset[0].id_periodo;
 
         const result = await pool.request()
-            .input('numero', mssql.VarChar(10), numero)
+            .input('numero', mssql.Int, numero)
             .input('idAsignatura', mssql.VarChar(20), idAsignatura)
             .input('idProfesor', mssql.VarChar(20), idProfesor || null)
             .input('idPeriodo', mssql.Int, idPeriodo)
-            .input('estado', mssql.VarChar(20), 'Activa')
+            .input('estado', mssql.Bit, 1)
             .query(`
-                INSERT INTO Seccion (numero, id_asignatura, id_profesor, id_periodo, estado)
+                INSERT INTO Seccion (numero_seccion, id_asignatura, id_profesor, id_periodo, estado)
                 VALUES (@numero, @idAsignatura, @idProfesor, @idPeriodo, @estado)
             `);
         res.status(201).json({ success: true, message: 'Sección creada' });
@@ -497,7 +519,10 @@ app.get('/api/notas', async (req, res) => {
             evalFinal: n.eval_final,
             notaFinal: n.nota_final,
             literal: n.nota_literal,
-            estado: n.estado
+            estado: n.estado,
+            // Calculado, NO confundir con "estado" (activo/inactivo del registro).
+            // Umbral 60, igual que calcularLiteralYEstado() en dashboard.js
+            resultado: n.nota_final != null ? (n.nota_final >= 60 ? 'Aprobado' : 'Reprobado') : null
         }));
 
         res.json({ success: true, data: notas });
@@ -534,7 +559,7 @@ app.post('/api/notas', async (req, res) => {
                     .input('evalFinal', mssql.Float, evalFinal)
                     .input('notaFinal', mssql.Float, notaFinal)
                     .input('literal', mssql.VarChar(2), literal)
-                    .input('estado', mssql.VarChar(20), estado)
+                    .input('estado', mssql.Bit, estado !== undefined ? estadoABit(estado) : 1) // activo/inactivo del registro, no confundir con aprobado/reprobado
                     .query(`
                         UPDATE Nota SET
                             id_seccion = @idSeccion,
@@ -559,7 +584,7 @@ app.post('/api/notas', async (req, res) => {
                     .input('evalFinal', mssql.Float, evalFinal)
                     .input('notaFinal', mssql.Float, notaFinal)
                     .input('literal', mssql.VarChar(2), literal)
-                    .input('estado', mssql.VarChar(20), estado)
+                    .input('estado', mssql.Bit, estado !== undefined ? estadoABit(estado) : 1)
                     .query(`
                         INSERT INTO Nota (id_estudiante, id_asignatura, id_seccion, acum1, acum2, acum3, eval_final, nota_final, nota_literal, estado)
                         VALUES (@idEstudiante, @idAsignatura, @idSeccion, @acum1, @acum2, @acum3, @evalFinal, @notaFinal, @literal, @estado)
@@ -678,7 +703,11 @@ app.get('/api/logs', async (req, res) => {
         `);
         res.json({ success: true, data: result.recordset });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        // La tabla Log no existe en el script de BD actual.
+        // Si quieres persistir logs en la BD, crea la tabla Log y este catch dejará de dispararse.
+        // Mientras tanto, no rompemos el dashboard: devolvemos vacío (el frontend ya usa localStorage como respaldo).
+        console.warn('⚠️  Tabla Log no encontrada, devolviendo lista vacía:', error.message);
+        res.json({ success: true, data: [] });
     }
 });
 
@@ -701,7 +730,9 @@ app.post('/api/logs', async (req, res) => {
             `);
         res.status(201).json({ success: true, message: 'Log registrado' });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        // Igual que en el GET: si la tabla Log no existe todavía, no tumbamos la petición.
+        console.warn('⚠️  No se pudo guardar el log en BD (¿existe la tabla Log?):', error.message);
+        res.status(200).json({ success: true, message: 'Log no persistido (tabla Log no existe aún)' });
     }
 });
 
