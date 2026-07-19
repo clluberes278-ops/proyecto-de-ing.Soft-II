@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
 // ============================================================================
 router.put('/', async (req, res) => {
     try {
-        const { verde, amarillo, rojo } = req.body;
+        const { riesgo, verde, amarillo } = req.body;
 
         if (verde === undefined || amarillo === undefined) {
             return res.status(400).json({
@@ -51,21 +51,24 @@ router.put('/', async (req, res) => {
 
         const pool = await getConnection();
 
-        // Actualiza la fila existente (ajusta el WHERE si manejas config por periodo)
+        // "rojo" en el diseño es un texto derivado ("Automático"), no editable desde el form
         const query = `
-            UPDATE ConfiguracionUmbral
-            SET verde = @verde,
-                amarillo = @amarillo
-                ${rojo !== undefined ? ', rojo = @rojo' : ''}
+            IF EXISTS (SELECT 1 FROM ConfiguracionUmbral)
+                UPDATE ConfiguracionUmbral
+                SET riesgo = @riesgo,
+                    verde = @verde,
+                    amarillo = @amarillo,
+                    rojo = @rojo
+            ELSE
+                INSERT INTO ConfiguracionUmbral (riesgo, verde, amarillo, rojo)
+                VALUES (@riesgo, @verde, @amarillo, @rojo)
         `;
 
         const request = pool.request()
+            .input('riesgo', sql.Decimal(5, 2), riesgo !== undefined ? riesgo : 60.0)
             .input('verde', sql.Decimal(5, 2), verde)
-            .input('amarillo', sql.Decimal(5, 2), amarillo);
-
-        if (rojo !== undefined) {
-            request.input('rojo', sql.Decimal(5, 2), rojo);
-        }
+            .input('amarillo', sql.Decimal(5, 2), amarillo)
+            .input('rojo', sql.VarChar(15), 'Automático');
 
         await request.query(query);
 

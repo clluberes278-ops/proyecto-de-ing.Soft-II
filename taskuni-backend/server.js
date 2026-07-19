@@ -12,11 +12,12 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// NOTA: las rutas de periodos, configuracion y notas están definidas
-// directamente más abajo con app.get/app.post, no se usan routers separados.
-// const periodosRouter = require('./routes/periodos');
-// const configuracionRouter = require('./routes/configuracion');
-// const notasRouter = require('./routes/notas');
+// NOTA: periodos, configuracion y notas ahora se manejan con routers dedicados
+// en ./routes, que ya incluyen JOINs con nombre de estudiante/asignatura y las
+// correcciones de tipos (estado bit, resolución de matrícula/código a id).
+const periodosRouter = require('./routes/periodos');
+const configuracionRouter = require('./routes/configuracion');
+const notasRouter = require('./routes/notas');
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -61,25 +62,6 @@ const config = {
 
 let pool;
 
-// ============================================================================
-// HELPERS: traducir estado entre bit (BD) y texto (frontend)
-// ============================================================================
-function estadoABit(valor) {
-    if (typeof valor === 'boolean') return valor ? 1 : 0;
-    if (typeof valor === 'number') return valor ? 1 : 0;
-    if (typeof valor === 'string') {
-        const v = valor.trim().toLowerCase();
-        return (v === 'activo' || v === 'activa' || v === '1' || v === 'true') ? 1 : 0;
-    }
-    return 1; // default: activo
-}
-
-function bitAEstadoTexto(bit, formaFemenina = false) {
-    const activo = formaFemenina ? 'Activa' : 'Activo';
-    const inactivo = formaFemenina ? 'Inactiva' : 'Inactivo';
-    return bit ? activo : inactivo;
-}
-
 async function initializeDatabase() {
     try {
         pool = new mssql.ConnectionPool(config);
@@ -90,6 +72,13 @@ async function initializeDatabase() {
         process.exit(1);
     }
 }
+
+// ============================================================================
+// ROUTERS DEDICADOS (periodos, configuracion, notas)
+// ============================================================================
+app.use('/api/periodos', periodosRouter);
+app.use('/api/configuracion', configuracionRouter);
+app.use('/api/notas', notasRouter);
 
 // ============================================================================
 // RUTAS DE PRUEBA
@@ -191,7 +180,7 @@ app.post('/api/estudiantes', async (req, res) => {
             .input('nombre', mssql.VarChar(100), nombre)
             .input('correo', mssql.VarChar(100), correo || null)
             .input('id_carrera', mssql.Int, carreraId)
-            .input('estado', mssql.Bit, estado !== undefined ? estadoABit(estado) : 1)
+            .input('estado', mssql.VarChar(15), estado || 'Activo')
             .query(`
                 INSERT INTO Estudiante (matricula, nombre, correo, id_carrera, estado)
                 VALUES (@matricula, @nombre, @correo, @id_carrera, @estado);
@@ -218,7 +207,7 @@ app.put('/api/estudiantes/:id', async (req, res) => {
             .input('id', mssql.Int, id)
             .input('nombre', mssql.VarChar(100), nombre)
             .input('correo', mssql.VarChar(100), correo)
-            .input('estado', mssql.Bit, estadoABit(estado))
+            .input('estado', mssql.VarChar(15), estado)
             .query(`
                 UPDATE Estudiante
                 SET nombre = @nombre, correo = @correo, estado = @estado
@@ -263,14 +252,12 @@ app.get('/api/asignaturas', async (req, res) => {
                 codigo_asignatura AS codigo,
                 nombre_asignatura AS nombre,
                 creditos,
-                id_profesor AS profesor,
                 id_pensum,
                 estado
             FROM Asignatura
             ORDER BY nombre_asignatura
         `);
-        const asignaturas = result.recordset.map(a => ({ ...a, estado: bitAEstadoTexto(a.estado, true) }));
-        res.json({ success: true, data: asignaturas });
+        res.json({ success: true, data: result.recordset });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -279,22 +266,25 @@ app.get('/api/asignaturas', async (req, res) => {
 // POST /api/asignaturas (crear)
 app.post('/api/asignaturas', async (req, res) => {
     try {
-        const { codigo, nombre, creditos, profesor, estado } = req.body;
+        const { codigo, nombre, creditos, estado } = req.body;
         if (!codigo || !nombre || !creditos) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
         }
+
         const result = await pool.request()
             .input('codigo', mssql.VarChar(20), codigo)
             .input('nombre', mssql.VarChar(100), nombre)
             .input('creditos', mssql.Int, creditos)
-            .input('profesor', mssql.VarChar(20), profesor || null)
-            .input('estado', mssql.Bit, estadoABit(estado || 'Activa'))
+            .input('estado', mssql.VarChar(15), estado || 'Activa')
             .query(`
-                INSERT INTO Asignatura (codigo_asignatura, nombre_asignatura, creditos, id_profesor, estado)
-                VALUES (@codigo, @nombre, @creditos, @profesor, @estado)
+                INSERT INTO Asignatura (codigo_asignatura, nombre_asignatura, creditos, estado)
+                VALUES (@codigo, @nombre, @creditos, @estado)
             `);
         res.status(201).json({ success: true, message: 'Asignatura creada' });
     } catch (error) {
+        if (error.number === 2627) {
+            return res.status(409).json({ success: false, error: 'Ya existe una asignatura con ese código' });
+        }
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -315,9 +305,32 @@ app.get('/api/carreras', async (req, res) => {
             FROM Carrera
             ORDER BY nombre_carrera
         `);
-        const carreras = result.recordset.map(c => ({ ...c, estado: bitAEstadoTexto(c.estado, true) }));
-        res.json({ success: true, data: carreras });
+        res.json({ success: true, data: result.recordset });
     } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/carreras', async (req, res) => {
+    try {
+        const { codigo, nombre, facultad, estado } = req.body;
+        if (!codigo || !nombre) {
+            return res.status(400).json({ success: false, error: 'Faltan campos requeridos (codigo, nombre)' });
+        }
+        await pool.request()
+            .input('codigo', mssql.VarChar(20), codigo)
+            .input('nombre', mssql.VarChar(100), nombre)
+            .input('facultad', mssql.VarChar(100), facultad || null)
+            .input('estado', mssql.VarChar(15), estado || 'Activa')
+            .query(`
+                INSERT INTO Carrera (codigo_carrera, nombre_carrera, facultad, estado)
+                VALUES (@codigo, @nombre, @facultad, @estado)
+            `);
+        res.status(201).json({ success: true, message: 'Carrera creada' });
+    } catch (error) {
+        if (error.number === 2627) {
+            return res.status(409).json({ success: false, error: 'Ya existe una carrera con ese código' });
+        }
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -345,57 +358,27 @@ app.get('/api/profesores', async (req, res) => {
     }
 });
 
-// ============================================================================
-// ENDPOINTS PARA PERIODOS
-// ============================================================================
-
-app.get('/api/periodos', async (req, res) => {
+app.post('/api/profesores', async (req, res) => {
     try {
-        const result = await pool.request().query(`
-            SELECT 
-                id_periodo,
-                periodo,
-                fecha_inicio,
-                fecha_fin,
-                estado
-            FROM Periodo
-            ORDER BY fecha_inicio DESC
-        `);
-        // Transformar a camelCase para el frontend
-        const periodos = result.recordset.map(p => ({
-            id_periodo: p.id_periodo,
-            periodo: p.periodo,
-            fechaInicio: p.fecha_inicio,
-            fechaFin: p.fecha_fin,
-            estado: bitAEstadoTexto(p.estado)
-        }));
-        res.json({ success: true, data: periodos });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-app.post('/api/periodos', async (req, res) => {
-    try {
-        const { periodo, fechaInicio, fechaFin, estado } = req.body;
-        if (!periodo || !fechaInicio || !fechaFin) {
-            return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
-        }
-        // Si el nuevo período es Activo, desactivar los demás
-        if (estado === 'Activo') {
-            await pool.request().query("UPDATE Periodo SET estado = 'Cerrado'");
+        const { codigo, nombre, correo, telefono, estado } = req.body;
+        if (!codigo || !nombre) {
+            return res.status(400).json({ success: false, error: 'Faltan campos requeridos (codigo, nombre)' });
         }
         await pool.request()
-            .input('periodo', mssql.VarChar(20), periodo)
-            .input('fechaInicio', mssql.Date, fechaInicio)
-            .input('fechaFin', mssql.Date, fechaFin)
-            .input('estado', mssql.Bit, estadoABit(estado || 'Activo'))
+            .input('codigo', mssql.VarChar(20), codigo)
+            .input('nombre', mssql.VarChar(100), nombre)
+            .input('correo', mssql.VarChar(100), correo || null)
+            .input('telefono', mssql.VarChar(20), telefono || null)
+            .input('estado', mssql.VarChar(15), estado || 'Activo')
             .query(`
-                INSERT INTO Periodo (periodo, fecha_inicio, fecha_fin, estado)
-                VALUES (@periodo, @fechaInicio, @fechaFin, @estado)
+                INSERT INTO Profesor (codigo_profesor, nombre, correo, telefono, estado)
+                VALUES (@codigo, @nombre, @correo, @telefono, @estado)
             `);
-        res.status(201).json({ success: true, message: 'Período creado' });
+        res.status(201).json({ success: true, message: 'Profesor creado' });
     } catch (error) {
+        if (error.number === 2627) {
+            return res.status(409).json({ success: false, error: 'Ya existe un profesor con ese código' });
+        }
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -417,7 +400,7 @@ app.get('/api/secciones', async (req, res) => {
                 s.estado
             FROM Seccion s
             LEFT JOIN Periodo p ON s.id_periodo = p.id_periodo
-            ORDER BY p.periodo, s.id_asignatura, s.numero
+            ORDER BY p.periodo, s.id_asignatura, s.numero_seccion
         `);
         res.json({ success: true, data: result.recordset });
     } catch (error) {
@@ -441,195 +424,47 @@ app.post('/api/secciones', async (req, res) => {
         }
         const idPeriodo = periodoResult.recordset[0].id_periodo;
 
+        // Los <select> del formulario mandan el código (ej. "INF-101", "PRO-237"),
+        // no el id numérico, así que los resolvemos aquí.
+        let idAsignaturaNum;
+        if (!isNaN(idAsignatura)) {
+            idAsignaturaNum = Number(idAsignatura);
+        } else {
+            const asigResult = await pool.request()
+                .input('codigo', mssql.VarChar(20), idAsignatura)
+                .query('SELECT id_asignatura FROM Asignatura WHERE codigo_asignatura = @codigo');
+            if (asigResult.recordset.length === 0) {
+                return res.status(400).json({ success: false, error: `Asignatura no encontrada: ${idAsignatura}` });
+            }
+            idAsignaturaNum = asigResult.recordset[0].id_asignatura;
+        }
+
+        let idProfesorNum = null;
+        if (idProfesor) {
+            if (!isNaN(idProfesor)) {
+                idProfesorNum = Number(idProfesor);
+            } else {
+                const profResult = await pool.request()
+                    .input('codigo', mssql.VarChar(20), idProfesor)
+                    .query('SELECT id_profesor FROM Profesor WHERE codigo_profesor = @codigo');
+                if (profResult.recordset.length === 0) {
+                    return res.status(400).json({ success: false, error: `Profesor no encontrado: ${idProfesor}` });
+                }
+                idProfesorNum = profResult.recordset[0].id_profesor;
+            }
+        }
+
         const result = await pool.request()
             .input('numero', mssql.Int, numero)
-            .input('idAsignatura', mssql.VarChar(20), idAsignatura)
-            .input('idProfesor', mssql.VarChar(20), idProfesor || null)
+            .input('idAsignatura', mssql.Int, idAsignaturaNum)
+            .input('idProfesor', mssql.Int, idProfesorNum)
             .input('idPeriodo', mssql.Int, idPeriodo)
-            .input('estado', mssql.Bit, 1)
+            .input('estado', mssql.VarChar(15), 'Activa')
             .query(`
                 INSERT INTO Seccion (numero_seccion, id_asignatura, id_profesor, id_periodo, estado)
                 VALUES (@numero, @idAsignatura, @idProfesor, @idPeriodo, @estado)
             `);
         res.status(201).json({ success: true, message: 'Sección creada' });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// ============================================================================
-// ENDPOINTS PARA NOTAS
-// ============================================================================
-
-app.get('/api/notas', async (req, res) => {
-    try {
-        const { estudiante, asignatura, seccion, periodo } = req.query;
-        let query = `
-            SELECT 
-                id_nota,
-                id_estudiante,
-                id_asignatura,
-                id_seccion,
-                acum1,
-                acum2,
-                acum3,
-                eval_final,
-                nota_final,
-                nota_literal,
-                estado
-            FROM Nota
-            WHERE 1=1
-        `;
-        const params = [];
-        if (estudiante) {
-            query += ' AND id_estudiante = @estudiante';
-            params.push({ name: 'estudiante', type: mssql.VarChar(20), value: estudiante });
-        }
-        if (asignatura) {
-            query += ' AND id_asignatura = @asignatura';
-            params.push({ name: 'asignatura', type: mssql.VarChar(20), value: asignatura });
-        }
-        if (seccion) {
-            query += ' AND id_seccion = @seccion';
-            params.push({ name: 'seccion', type: mssql.VarChar(20), value: seccion });
-        }
-        if (periodo) {
-            // Seccion guarda id_periodo (FK); unimos con Periodo para filtrar por el texto del periodo
-            query += ` AND id_seccion IN (
-                SELECT s.id_seccion FROM Seccion s
-                INNER JOIN Periodo p ON s.id_periodo = p.id_periodo
-                WHERE p.periodo = @periodo
-            )`;
-            params.push({ name: 'periodo', type: mssql.VarChar(20), value: periodo });
-        }
-
-        const request = pool.request();
-        params.forEach(p => request.input(p.name, p.type, p.value));
-        const result = await request.query(query);
-
-        // Transformar a camelCase para el frontend
-        const notas = result.recordset.map(n => ({
-            id_nota: n.id_nota,
-            id_estudiante: n.id_estudiante,
-            id_asignatura: n.id_asignatura,
-            id_seccion: n.id_seccion,
-            acum1: n.acum1,
-            acum2: n.acum2,
-            acum3: n.acum3,
-            evalFinal: n.eval_final,
-            notaFinal: n.nota_final,
-            literal: n.nota_literal,
-            estado: n.estado,
-            // Calculado, NO confundir con "estado" (activo/inactivo del registro).
-            // Umbral 60, igual que calcularLiteralYEstado() en dashboard.js
-            resultado: n.nota_final != null ? (n.nota_final >= 60 ? 'Aprobado' : 'Reprobado') : null
-        }));
-
-        res.json({ success: true, data: notas });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-app.post('/api/notas', async (req, res) => {
-    try {
-        const { notas } = req.body; // Array de objetos nota
-        if (!notas || !Array.isArray(notas) || notas.length === 0) {
-            return res.status(400).json({ success: false, error: 'Debe enviar un arreglo de notas' });
-        }
-
-        // Procesar cada nota (upsert)
-        for (const nota of notas) {
-            const { idEstudiante, idAsignatura, idSeccion, acum1, acum2, acum3, evalFinal, notaFinal, literal, estado } = nota;
-            // Verificar si ya existe
-            const check = await pool.request()
-                .input('idEstudiante', mssql.VarChar(20), idEstudiante)
-                .input('idAsignatura', mssql.VarChar(20), idAsignatura)
-                .query('SELECT id_nota FROM Nota WHERE id_estudiante = @idEstudiante AND id_asignatura = @idAsignatura');
-
-            if (check.recordset.length > 0) {
-                // Actualizar
-                await pool.request()
-                    .input('idEstudiante', mssql.VarChar(20), idEstudiante)
-                    .input('idAsignatura', mssql.VarChar(20), idAsignatura)
-                    .input('idSeccion', mssql.VarChar(20), idSeccion)
-                    .input('acum1', mssql.Float, acum1)
-                    .input('acum2', mssql.Float, acum2)
-                    .input('acum3', mssql.Float, acum3)
-                    .input('evalFinal', mssql.Float, evalFinal)
-                    .input('notaFinal', mssql.Float, notaFinal)
-                    .input('literal', mssql.VarChar(2), literal)
-                    .input('estado', mssql.Bit, estado !== undefined ? estadoABit(estado) : 1) // activo/inactivo del registro, no confundir con aprobado/reprobado
-                    .query(`
-                        UPDATE Nota SET
-                            id_seccion = @idSeccion,
-                            acum1 = @acum1,
-                            acum2 = @acum2,
-                            acum3 = @acum3,
-                            eval_final = @evalFinal,
-                            nota_final = @notaFinal,
-                            nota_literal = @literal,
-                            estado = @estado
-                        WHERE id_estudiante = @idEstudiante AND id_asignatura = @idAsignatura
-                    `);
-            } else {
-                // Insertar
-                await pool.request()
-                    .input('idEstudiante', mssql.VarChar(20), idEstudiante)
-                    .input('idAsignatura', mssql.VarChar(20), idAsignatura)
-                    .input('idSeccion', mssql.VarChar(20), idSeccion)
-                    .input('acum1', mssql.Float, acum1)
-                    .input('acum2', mssql.Float, acum2)
-                    .input('acum3', mssql.Float, acum3)
-                    .input('evalFinal', mssql.Float, evalFinal)
-                    .input('notaFinal', mssql.Float, notaFinal)
-                    .input('literal', mssql.VarChar(2), literal)
-                    .input('estado', mssql.Bit, estado !== undefined ? estadoABit(estado) : 1)
-                    .query(`
-                        INSERT INTO Nota (id_estudiante, id_asignatura, id_seccion, acum1, acum2, acum3, eval_final, nota_final, nota_literal, estado)
-                        VALUES (@idEstudiante, @idAsignatura, @idSeccion, @acum1, @acum2, @acum3, @evalFinal, @notaFinal, @literal, @estado)
-                    `);
-            }
-        }
-        res.json({ success: true, message: `Procesadas ${notas.length} notas` });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// ============================================================================
-// ENDPOINTS PARA CONFIGURACIÓN (umbrales)
-// ============================================================================
-
-app.get('/api/configuracion', async (req, res) => {
-    try {
-        const result = await pool.request().query('SELECT TOP 1 riesgo, verde, amarillo FROM ConfiguracionUmbral ORDER BY id_configuracion');
-        if (result.recordset.length === 0) {
-            // Valores por defecto
-            return res.json({ success: true, data: { riesgo: 60.0, verde: 3.2, amarillo: 2.5 } });
-        }
-        res.json({ success: true, data: result.recordset[0] });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-app.put('/api/configuracion', async (req, res) => {
-    try {
-        const { verde, amarillo } = req.body;
-        if (verde === undefined || amarillo === undefined) {
-            return res.status(400).json({ success: false, error: 'Faltan campos' });
-        }
-        await pool.request()
-            .input('verde', mssql.Float, verde)
-            .input('amarillo', mssql.Float, amarillo)
-            .query(`
-                IF EXISTS (SELECT 1 FROM ConfiguracionUmbral)
-                    UPDATE ConfiguracionUmbral SET verde = @verde, amarillo = @amarillo
-                ELSE
-                    INSERT INTO ConfiguracionUmbral (riesgo, verde, amarillo) VALUES (60.0, @verde, @amarillo)
-            `);
-        res.json({ success: true, message: 'Configuración actualizada' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -765,8 +600,7 @@ app.get('/api/pensum/:idCarrera', async (req, res) => {
                     p.estado,
                     a.codigo_asignatura,
                     a.nombre_asignatura,
-                    a.creditos,
-                    a.id_profesor
+                    a.creditos
                 FROM Pensum p
                 INNER JOIN Asignatura a ON p.id_pensum = a.id_pensum
                 WHERE p.id_carrera = @idCarrera

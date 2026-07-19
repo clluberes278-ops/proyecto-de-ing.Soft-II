@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getConnection, sql } = require('../db'); // ajusta la ruta a tu módulo de conexión
+const { getConnection, sql } = require('../db');
 
 // ============================================================================
 // GET /api/periodos - Listar todos los periodos
@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
             periodo: p.periodo,
             fechaInicio: p.fecha_inicio,
             fechaFin: p.fecha_fin,
-            estado: bitAEstadoTexto(p.estado)
+            estado: p.estado
         }));
 
         res.json({ success: true, data: periodos });
@@ -56,6 +56,11 @@ router.post('/', async (req, res) => {
 
         const pool = await getConnection();
 
+        // Si el nuevo período es Activo, cerrar los demás
+        if ((estado || 'Activo') === 'Activo') {
+            await pool.request().query("UPDATE Periodo SET estado = 'Cerrado'");
+        }
+
         const query = `
             INSERT INTO Periodo (periodo, fecha_inicio, fecha_fin, estado)
             OUTPUT INSERTED.id_periodo
@@ -66,7 +71,7 @@ router.post('/', async (req, res) => {
             .input('periodo', sql.VarChar(20), periodo)
             .input('fechaInicio', sql.Date, fechaInicio)
             .input('fechaFin', sql.Date, fechaFin)
-            .input('estado', sql.Bit, estado ?? 1)
+            .input('estado', sql.VarChar(15), estado || 'Activo')
             .query(query);
 
         res.json({ success: true, id_periodo: result.recordset[0].id_periodo });
