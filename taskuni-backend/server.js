@@ -233,9 +233,12 @@ app.get('/api/estudiantes/:id', async (req, res) => {
 });
 
 // POST /api/estudiantes (crear)
+// Acepta crearCuenta=true + password para crear también la cuenta de acceso
+// (Usuario con rol 'estudiante' y id_referencia = id_estudiante recién creado).
+// Si crearCuenta=true, todo se hace en una transacción: si algo falla, no se guarda nada.
 app.post('/api/estudiantes', async (req, res) => {
     try {
-        const { matricula, nombre, correo, id_carrera, estado } = req.body;
+        const { matricula, nombre, correo, id_carrera, estado, crearCuenta, password } = req.body;
 
         if (!matricula || !nombre || !id_carrera) {
             return res.status(400).json({
@@ -244,10 +247,19 @@ app.post('/api/estudiantes', async (req, res) => {
             });
         }
 
+        // Si pidió crear cuenta, validar
+        if (crearCuenta) {
+            if (!correo) {
+                return res.status(400).json({ success: false, error: 'Para crear cuenta de acceso se requiere correo' });
+            }
+            if (!password || password.length < 6) {
+                return res.status(400).json({ success: false, error: 'Para crear cuenta de acceso se requiere password (mín. 6 caracteres)' });
+            }
+        }
+
         // Convertir id_carrera (que puede ser código) a id numérico
         let carreraId = id_carrera;
         if (isNaN(id_carrera)) {
-            // Buscar carrera por código
             const carreraResult = await pool.request()
                 .input('codigo', mssql.VarChar(20), id_carrera)
                 .query('SELECT id_carrera FROM Carrera WHERE codigo_carrera = @codigo');
@@ -257,22 +269,58 @@ app.post('/api/estudiantes', async (req, res) => {
             carreraId = carreraResult.recordset[0].id_carrera;
         }
 
-        const result = await pool.request()
-            .input('matricula', mssql.VarChar(20), matricula)
-            .input('nombre', mssql.VarChar(100), nombre)
-            .input('correo', mssql.VarChar(100), correo || null)
-            .input('id_carrera', mssql.Int, carreraId)
-            .input('estado', mssql.VarChar(15), estado || 'Activo')
-            .query(`
-                INSERT INTO Estudiante (matricula, nombre, correo, id_carrera, estado)
-                VALUES (@matricula, @nombre, @correo, @id_carrera, @estado);
-                SELECT SCOPE_IDENTITY() AS id_estudiante;
-            `);
+        // ==== Transacción: Estudiante + (opcional) Usuario ====
+        const transaction = pool.transaction();
+        await transaction.begin();
+
+        let idEstudiante;
+        try {
+            const resultEst = await transaction.request()
+                .input('matricula', mssql.VarChar(20), matricula)
+                .input('nombre', mssql.VarChar(100), nombre)
+                .input('correo', mssql.VarChar(100), correo || null)
+                .input('id_carrera', mssql.Int, carreraId)
+                .input('estado', mssql.VarChar(15), estado || 'Activo')
+                .query(`
+                    INSERT INTO Estudiante (matricula, nombre, correo, id_carrera, estado)
+                    VALUES (@matricula, @nombre, @correo, @id_carrera, @estado);
+                    SELECT SCOPE_IDENTITY() AS id_estudiante;
+                `);
+            idEstudiante = resultEst.recordset[0].id_estudiante;
+
+            if (crearCuenta) {
+                // Verificar que el correo no exista ya en Usuario
+                const existeUsuario = await transaction.request()
+                    .input('correoUser', mssql.VarChar(100), correo.toLowerCase().trim())
+                    .query('SELECT id_usuario FROM Usuario WHERE correo = @correoUser');
+                if (existeUsuario.recordset.length > 0) {
+                    throw new Error('Ya existe un usuario con ese correo');
+                }
+                const hash = await bcrypt.hash(password, 10);
+                await transaction.request()
+                    .input('correoUser', mssql.VarChar(100), correo.toLowerCase().trim())
+                    .input('hash', mssql.VarChar(255), hash)
+                    .input('idRef', mssql.Int, idEstudiante)
+                    .query(`
+                        INSERT INTO Usuario (correo, password_hash, rol, id_referencia, estado)
+                        VALUES (@correoUser, @hash, 'estudiante', @idRef, 'Activo')
+                    `);
+            }
+
+            await transaction.commit();
+        } catch (e) {
+            await transaction.rollback();
+            throw e;
+        }
 
         res.status(201).json({
             success: true,
-            message: 'Estudiante creado exitosamente',
-            id_estudiante: result.recordset[0].id_estudiante
+            message: crearCuenta
+                ? 'Estudiante y cuenta de acceso creados correctamente'
+                : 'Estudiante creado exitosamente',
+            id_estudiante: idEstudiante,
+            cuenta_creada: !!crearCuenta,
+            login: crearCuenta ? correo.toLowerCase().trim() : undefined
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -459,23 +507,77 @@ app.get('/api/profesores', async (req, res) => {
     }
 });
 
+// POST /api/profesores (crear)
+// Acepta crearCuenta=true + password para crear también la cuenta de acceso
+// (Usuario con rol 'maestro' y id_referencia = id_profesor recién creado).
+// Si crearCuenta=true, todo se hace en una transacción: si algo falla, no se guarda nada.
 app.post('/api/profesores', async (req, res) => {
     try {
-        const { codigo, nombre, correo, telefono, estado } = req.body;
+        const { codigo, nombre, correo, telefono, estado, crearCuenta, password } = req.body;
         if (!codigo || !nombre) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos (codigo, nombre)' });
         }
-        await pool.request()
-            .input('codigo', mssql.VarChar(20), codigo)
-            .input('nombre', mssql.VarChar(100), nombre)
-            .input('correo', mssql.VarChar(100), correo || null)
-            .input('telefono', mssql.VarChar(20), telefono || null)
-            .input('estado', mssql.VarChar(15), estado || 'Activo')
-            .query(`
-                INSERT INTO Profesor (codigo_profesor, nombre, correo, telefono, estado)
-                VALUES (@codigo, @nombre, @correo, @telefono, @estado)
-            `);
-        res.status(201).json({ success: true, message: 'Profesor creado' });
+        if (crearCuenta) {
+            if (!correo) {
+                return res.status(400).json({ success: false, error: 'Para crear cuenta de acceso se requiere correo' });
+            }
+            if (!password || password.length < 6) {
+                return res.status(400).json({ success: false, error: 'Para crear cuenta de acceso se requiere password (mín. 6 caracteres)' });
+            }
+        }
+
+        // ==== Transacción: Profesor + (opcional) Usuario ====
+        const transaction = pool.transaction();
+        await transaction.begin();
+
+        let idProfesor;
+        try {
+            const resultProf = await transaction.request()
+                .input('codigo', mssql.VarChar(20), codigo)
+                .input('nombre', mssql.VarChar(100), nombre)
+                .input('correo', mssql.VarChar(100), correo || null)
+                .input('telefono', mssql.VarChar(20), telefono || null)
+                .input('estado', mssql.VarChar(15), estado || 'Activo')
+                .query(`
+                    INSERT INTO Profesor (codigo_profesor, nombre, correo, telefono, estado)
+                    VALUES (@codigo, @nombre, @correo, @telefono, @estado);
+                    SELECT SCOPE_IDENTITY() AS id_profesor;
+                `);
+            idProfesor = resultProf.recordset[0].id_profesor;
+
+            if (crearCuenta) {
+                const existeUsuario = await transaction.request()
+                    .input('correoUser', mssql.VarChar(100), correo.toLowerCase().trim())
+                    .query('SELECT id_usuario FROM Usuario WHERE correo = @correoUser');
+                if (existeUsuario.recordset.length > 0) {
+                    throw new Error('Ya existe un usuario con ese correo');
+                }
+                const hash = await bcrypt.hash(password, 10);
+                await transaction.request()
+                    .input('correoUser', mssql.VarChar(100), correo.toLowerCase().trim())
+                    .input('hash', mssql.VarChar(255), hash)
+                    .input('idRef', mssql.Int, idProfesor)
+                    .query(`
+                        INSERT INTO Usuario (correo, password_hash, rol, id_referencia, estado)
+                        VALUES (@correoUser, @hash, 'maestro', @idRef, 'Activo')
+                    `);
+            }
+
+            await transaction.commit();
+        } catch (e) {
+            await transaction.rollback();
+            throw e;
+        }
+
+        res.status(201).json({
+            success: true,
+            message: crearCuenta
+                ? 'Profesor y cuenta de acceso creados correctamente'
+                : 'Profesor creado',
+            id_profesor: idProfesor,
+            cuenta_creada: !!crearCuenta,
+            login: crearCuenta ? correo.toLowerCase().trim() : undefined
+        });
     } catch (error) {
         if (error.number === 2627) {
             return res.status(409).json({ success: false, error: 'Ya existe un profesor con ese código' });

@@ -404,17 +404,6 @@ async function renderENT01() {
               ${carreras.map(c => `<option value="${c.codigo}">${c.nombre}</option>`).join('')}
             </select>
           </div>
-          <div class="pt-2 border-t border-slate-100">
-            <label class="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" id="ent01-crear-cuenta" class="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500">
-              <span class="text-xs font-semibold text-slate-700">También crear cuenta de acceso al sistema</span>
-            </label>
-            <div id="ent01-passwrap" class="mt-2 hidden">
-              <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Contraseña inicial (mín. 6 caracteres)</label>
-              <input type="password" id="ent01-password" placeholder="ej: Maria123" minlength="6" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
-              <p class="text-[10px] text-slate-400 mt-1 italic">El estudiante podrá cambiarla después de su primer login.</p>
-            </div>
-          </div>
           <div class="flex gap-2">
             <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition shadow shadow-emerald-600/10 font-title">Guardar</button>
             <button type="button" onclick="renderView('inicio')" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Cancelar</button>
@@ -455,19 +444,12 @@ async function renderENT01() {
     actualizarTablaEstudiantes(e.target.value.trim());
   });
 
-  // Toggle mostrar/ocultar input de contraseña según checkbox
-  document.getElementById('ent01-crear-cuenta').addEventListener('change', e => {
-    document.getElementById('ent01-passwrap').classList.toggle('hidden', !e.target.checked);
-  });
-
   document.getElementById('form-ent01').addEventListener('submit', async function (e) {
     e.preventDefault();
     const mat = document.getElementById('ent01-matricula').value.trim();
     const nom = document.getElementById('ent01-nombre').value.trim();
     const cor = document.getElementById('ent01-correo').value.trim().toLowerCase();
     const car = document.getElementById('ent01-carrera').value;
-    const crearCuenta = document.getElementById('ent01-crear-cuenta').checked;
-    const password = document.getElementById('ent01-password').value;
 
     const formatoMatricula = /^\d{2}-\d{4}$/;
     if (!formatoMatricula.test(mat)) {
@@ -483,16 +465,11 @@ async function renderENT01() {
       showToast('Debe ingresar un correo institucional (@unphu.edu.do).', 'error');
       return;
     }
-    if (crearCuenta && password.length < 6) {
-      showToast('La contraseña debe tener al menos 6 caracteres.', 'error');
-      return;
-    }
 
     try {
-      const resp = await apiClient.crearEstudiante({ matricula: mat, nombre: nom, correo: cor, id_carrera: car, estado: 'Activo', crearCuenta, password });
-      showToast(resp.message || (crearCuenta ? `Estudiante y cuenta creados. Login: ${cor}` : 'Estudiante registrado con éxito.'), 'success');
+      await apiClient.crearEstudiante({ matricula: mat, nombre: nom, correo: cor, id_carrera: car, estado: 'Activo' });
+      showToast('Estudiante registrado con éxito.');
       this.reset();
-      document.getElementById('ent01-passwrap').classList.add('hidden');
       await actualizarTablaEstudiantes();
     } catch (error) {
       showToast('Error al guardar: ' + error.message, 'error');
@@ -515,9 +492,7 @@ async function actualizarTablaEstudiantes(filtro = '') {
       return;
     }
     tbody.innerHTML = filtrados.map(est => {
-      // FIX: backend ya devuelve carreraNombre / carreraCodigo vía JOIN.
-      // Antes hacía lookup por est.carrera (campo inexistente) y mostraba vacío.
-      const carrera = est.carreraNombre || est.carreraCodigo || '— sin carrera —';
+      const carrera = carreras.find(c => c.codigo === est.carrera)?.nombre || est.carrera;
       return `
         <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
           <td class="p-3 font-semibold font-mono text-slate-700">${est.matricula}</td>
@@ -819,17 +794,6 @@ async function renderENT04() {
               <option value="Inactivo">Inactivo</option>
             </select>
           </div>
-          <div class="pt-2 border-t border-slate-100">
-            <label class="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" id="ent04-crear-cuenta" class="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500">
-              <span class="text-xs font-semibold text-slate-700">También crear cuenta de acceso al sistema</span>
-            </label>
-            <div id="ent04-passwrap" class="mt-2 hidden">
-              <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Contraseña inicial (mín. 6 caracteres)</label>
-              <input type="password" id="ent04-password" placeholder="ej: Maestro123" minlength="6" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
-              <p class="text-[10px] text-slate-400 mt-1 italic">El profesor podrá cambiarla después de su primer login.</p>
-            </div>
-          </div>
           <div class="flex gap-2">
             <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
             <button type="button" id="btn-buscar-profesor" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Buscar</button>
@@ -845,34 +809,22 @@ async function renderENT04() {
 
   await actualizarGridProfesores();
 
-  // Toggle mostrar/ocultar input de contraseña según checkbox
-  document.getElementById('ent04-crear-cuenta').addEventListener('change', e => {
-    document.getElementById('ent04-passwrap').classList.toggle('hidden', !e.target.checked);
-  });
-
   document.getElementById('form-ent04').addEventListener('submit', async function (e) {
     e.preventDefault();
     const cod = document.getElementById('ent04-codigo').value.trim().toUpperCase();
     const nom = document.getElementById('ent04-nombre').value.trim();
     const cor = document.getElementById('ent04-correo').value.trim().toLowerCase();
     const est = document.getElementById('ent04-estado').value;
-    const crearCuenta = document.getElementById('ent04-crear-cuenta').checked;
-    const password = document.getElementById('ent04-password').value;
 
     const regexCod = /^PRO-\d{3}$/;
     if (!regexCod.test(cod)) {
       showToast('El código debe tener el formato PRO-000.', 'error');
       return;
     }
-    if (crearCuenta && password.length < 6) {
-      showToast('La contraseña debe tener al menos 6 caracteres.', 'error');
-      return;
-    }
     try {
-      const resp = await apiClient.crearProfesor({ codigo: cod, nombre: nom, correo: cor, estado: est, crearCuenta, password });
-      showToast(resp.message || (crearCuenta ? `Profesor y cuenta creados. Login: ${cor}` : 'Profesor guardado correctamente.'), 'success');
+      await apiClient.crearProfesor({ codigo: cod, nombre: nom, correo: cor, estado: est });
+      showToast('Profesor guardado correctamente.', 'success');
       this.reset();
-      document.getElementById('ent04-passwrap').classList.add('hidden');
       await actualizarGridProfesores();
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
@@ -909,17 +861,12 @@ async function actualizarGridProfesores(filtro = '') {
           <div class="w-10 h-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-sm shrink-0 font-title">
             ${p.nombre.split(' ').pop().charAt(0) || 'P'}
           </div>
-          <div class="overflow-hidden flex-1">
+          <div class="overflow-hidden">
             <h4 class="font-bold text-sm text-slate-800 truncate">${p.nombre}</h4>
             <p class="text-xs text-slate-500 truncate">${p.correo}</p>
             <div class="mt-2 flex flex-wrap gap-1 items-center">${materiasBadge}</div>
           </div>
-          <div class="flex flex-col items-end gap-1">
-            <span class="px-1.5 py-0.5 rounded text-[8px] font-bold ${p.estado === 'Activo' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'} font-title">${p.estado}</span>
-            <button type="button" onclick="eliminarProfesor('${p.codigo}')" title="Eliminar profesor" class="mt-1 p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition">
-              <span class="material-symbols-outlined text-base leading-none">delete</span>
-            </button>
-          </div>
+          <span class="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[8px] font-bold ${p.estado === 'Activo' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'} font-title">${p.estado}</span>
         </div>
       `;
     }).join('');
@@ -1785,9 +1732,7 @@ async function cargarBoletinEstudiante() {
     const est = estudiantes.find(e => e.matricula === selectedStudentIndex);
     if (!est) return;
 
-    // FIX: backend ya devuelve carreraNombre / carreraCodigo vía JOIN.
-    // Antes hacía lookup por est.carrera (campo inexistente) y mostraba vacío.
-    const carreraNombre = est.carreraNombre || est.carreraCodigo || '— sin carrera —';
+    const carreraNombre = carreras.find(c => c.codigo === est.carrera)?.nombre || est.carrera;
     const indice = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
 
     let listadoNotasHTML = '';

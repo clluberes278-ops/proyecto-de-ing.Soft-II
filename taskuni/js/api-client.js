@@ -212,8 +212,13 @@ const apiClient = (() => {
         return response;
     }
 
+    /**
+     * Eliminar un profesor por código
+     * @param {string} codigo - Código del profesor (ej: PRO-001)
+     * @returns {Promise<Object>} { success, message }
+     */
     async function eliminarProfesor(codigo) {
-    return await makeRequest(`/profesores/${codigo}`, { method: 'DELETE' });
+        return await makeRequest(`/profesores/${codigo}`, { method: 'DELETE' });
     }
 
     // ========================================================================
@@ -450,6 +455,7 @@ const apiClient = (() => {
         // Profesores
         getProfesores,
         crearProfesor,
+        eliminarProfesor,
 
         // Pensa
         getPensa,
