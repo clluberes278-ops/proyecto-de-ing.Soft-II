@@ -484,6 +484,18 @@ app.post('/api/profesores', async (req, res) => {
     }
 });
 
+app.delete('/api/profesores/:codigo', async (req, res) => {
+    try {
+        const { codigo } = req.params;
+        await pool.request()
+            .input('codigo', mssql.VarChar(20), codigo)
+            .query('DELETE FROM Profesor WHERE codigo_profesor = @codigo');
+        res.json({ success: true, message: 'Profesor eliminado' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ============================================================================
 // ENDPOINTS PARA SECCIONES
 // ============================================================================

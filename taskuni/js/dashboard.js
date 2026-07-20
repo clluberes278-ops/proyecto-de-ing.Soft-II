@@ -875,6 +875,18 @@ async function actualizarGridProfesores(filtro = '') {
   }
 }
 
+async function eliminarProfesor(codigo) {
+  if (confirm(`¿Eliminar al profesor ${codigo}? Esta acción no se puede deshacer.`)) {
+    try {
+      await apiClient.eliminarProfesor(codigo);
+      showToast('Profesor eliminado.', 'success');
+      await actualizarGridProfesores();
+    } catch (error) {
+      showToast('Error: ' + error.message, 'error');
+    }
+  }
+}
+
 // ============================================================
 // 6. ENT-05: REGISTRO DE CARRERAS
 // ============================================================

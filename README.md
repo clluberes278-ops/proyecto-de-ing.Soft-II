@@ -258,4 +258,4 @@ Cada exportación registra un log en `GET /logs` con tipo, evento, período y ca
 
 ## 📝 Licencia
 
-MIT — Carlos Lluberes (Kal)
+ — Carlos Lluberes (Kal)

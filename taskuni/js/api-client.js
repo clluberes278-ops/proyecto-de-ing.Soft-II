@@ -212,6 +212,10 @@ const apiClient = (() => {
         return response;
     }
 
+    async function eliminarProfesor(codigo) {
+    return await makeRequest(`/profesores/${codigo}`, { method: 'DELETE' });
+    }
+
     // ========================================================================
     // MÉTODOS PÚBLICOS - PENSA
     // ========================================================================
