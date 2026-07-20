@@ -638,9 +638,9 @@ async function actualizarTablaAsignaturas(filtro = '') {
 async function eliminarAsignatura(codigo) {
   if (confirm(`¿Eliminar la asignatura ${codigo}?`)) {
     try {
-      // Si tu API tiene un endpoint para eliminar, de lo contrario, simula.
-      // Por ahora mostramos un mensaje.
-      showToast('Función de eliminación pendiente en el backend.', 'error');
+      await apiClient.eliminarAsignatura(codigo);
+      showToast('Asignatura eliminada.', 'success');
+      await actualizarTablaAsignaturas();
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
     }
@@ -1248,17 +1248,16 @@ async function actualizarTablaSecciones() {
   if (!tbody) return;
   try {
     const secciones = await apiClient.getSecciones();
-    const profesores = await apiClient.getProfesores();
     if (secciones.length === 0) {
       tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No hay secciones registradas.</td></tr>`;
       return;
     }
     tbody.innerHTML = secciones.map(sec => {
-      const prof = profesores.find(p => p.codigo === sec.idProfesor)?.nombre || 'Sin asignar';
+      const prof = sec.nombreProfesor || 'Sin asignar';
       return `
         <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
           <td class="p-3 font-semibold font-mono text-slate-700">${sec.periodo}</td>
-          <td class="p-3 text-slate-800 font-semibold font-mono">${sec.idAsignatura}</td>
+          <td class="p-3 text-slate-800 font-semibold font-mono">${sec.codigoAsignatura}</td>
           <td class="p-3 font-bold text-slate-600">${sec.numero}</td>
           <td class="p-3 text-slate-500">${prof}</td>
           <td class="p-3 text-right">
@@ -1277,8 +1276,9 @@ async function actualizarTablaSecciones() {
 async function eliminarSeccion(id) {
   if (confirm('¿Deseas eliminar esta sección?')) {
     try {
-      // Si hay endpoint, úsalo.
-      showToast('Función de eliminación pendiente en el backend.', 'error');
+      await apiClient.eliminarSeccion(id);
+      showToast('Sección eliminada.', 'success');
+      await actualizarTablaSecciones();
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
     }
@@ -1293,12 +1293,16 @@ async function renderENT07() {
 
   const asignaturas = await apiClient.getAsignaturas();
   const profesores = await apiClient.getProfesores();
+  const secciones = await apiClient.getSecciones();
 
   let materiasFiltradas = asignaturas;
   if (currentUser.rol === 'maestro') {
     const prof = profesores.find(p => p.correo === currentUser.usuario);
     if (prof) {
-      materiasFiltradas = asignaturas.filter(a => a.profesor === prof.codigo);
+      const codigosDelProfesor = new Set(
+        secciones.filter(s => s.codigoProfesor === prof.codigo).map(s => s.codigoAsignatura)
+      );
+      materiasFiltradas = asignaturas.filter(a => codigosDelProfesor.has(a.codigo));
     } else {
       materiasFiltradas = [];
     }
@@ -1327,7 +1331,7 @@ async function renderENT07() {
         <div class="w-full md:w-48">
           <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Sección</label>
           <select id="ent07-select-seccion" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" disabled>
-            <option value="01">Sección 01</option>
+            <option value="">Seleccione Asignatura primero</option>
           </select>
         </div>
         <button onclick="cargarTablaCalificacionesActa()" class="py-2 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition shrink-0 shadow shadow-emerald-600/10 font-title flex items-center gap-1">
@@ -1373,7 +1377,23 @@ async function renderENT07() {
   `;
 
   document.getElementById('ent07-select-asignatura').addEventListener('change', function () {
-    document.getElementById('ent07-select-seccion').disabled = !this.value;
+    const selSeccion = document.getElementById('ent07-select-seccion');
+    const codAsig = this.value;
+    if (!codAsig) {
+      selSeccion.innerHTML = '<option value="">Seleccione Asignatura primero</option>';
+      selSeccion.disabled = true;
+      return;
+    }
+    const seccionesDeLaAsignatura = secciones.filter(s => s.codigoAsignatura === codAsig);
+    if (seccionesDeLaAsignatura.length === 0) {
+      selSeccion.innerHTML = '<option value="">Sin secciones creadas</option>';
+      selSeccion.disabled = true;
+      return;
+    }
+    selSeccion.innerHTML = seccionesDeLaAsignatura
+      .map(s => `<option value="${s.id}">Sección ${s.numero}</option>`)
+      .join('');
+    selSeccion.disabled = false;
   });
 }
 
@@ -1458,7 +1478,12 @@ function recalcularNotaFila(input) {
 
 async function guardarActaNotas() {
   const codAsig = document.getElementById('ent07-select-asignatura').value;
+  const idSeccionSel = document.getElementById('ent07-select-seccion').value;
   if (!codAsig) return;
+  if (!idSeccionSel) {
+    showToast('Selecciona una sección antes de guardar.', 'error');
+    return;
+  }
 
   const filas = document.querySelectorAll('#tbl-acta-estudiantes tr');
   const notas = [];
@@ -1480,7 +1505,7 @@ async function guardarActaNotas() {
     notas.push({
       idEstudiante: matricula,
       idAsignatura: codAsig,
-      idSeccion: 'SEC-01',
+      idSeccion: idSeccionSel,
       acum1: ac1, acum2: ac2, acum3: ac3,
       evalFinal: fin,
       notaFinal: promedio,

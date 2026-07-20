@@ -111,10 +111,9 @@ router.get('/', async (req, res) => {
 // { notas: [ { idEstudiante, idAsignatura, idSeccion, acum1, acum2, acum3,
 //              evalFinal, notaFinal, literal } ] }
 //
-// ⚠️ PENDIENTE: dashboard.js manda idSeccion fijo como 'SEC-01' (texto), pero
-// id_seccion en la BD es un FK numérico real a la tabla Seccion. Falta que el
-// frontend tenga un selector real de sección; mientras tanto, si no llega un
-// id numérico válido, se usa la primera sección existente de esa asignatura.
+// dashboard.js ya manda el id_seccion real (elegido en el selector de Sección
+// del formulario ENT-07). El fallback de abajo (tomar la primera sección de
+// la asignatura) queda solo como red de seguridad por si llega vacío.
 // ============================================================================
 router.post('/', async (req, res) => {
     try {

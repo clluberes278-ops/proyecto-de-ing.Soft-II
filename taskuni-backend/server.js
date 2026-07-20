@@ -5,6 +5,7 @@
 
 const express = require('express');
 const mssql = require('mssql');
+const bcrypt = require('bcryptjs');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 require('dotenv').config();
@@ -81,6 +82,84 @@ app.use('/api/configuracion', configuracionRouter);
 app.use('/api/notas', notasRouter);
 
 // ============================================================================
+// ENDPOINTS DE AUTENTICACIÓN
+// ============================================================================
+
+app.post('/api/login', async (req, res) => {
+    try {
+        const { correo, password } = req.body;
+        if (!correo || !password) {
+            return res.status(400).json({ success: false, error: 'Correo y contraseña son requeridos' });
+        }
+
+        const result = await pool.request()
+            .input('correo', mssql.VarChar(100), correo.toLowerCase().trim())
+            .query('SELECT id_usuario, correo, password_hash, rol, id_referencia, estado FROM Usuario WHERE correo = @correo');
+
+        if (result.recordset.length === 0) {
+            return res.status(401).json({ success: false, error: 'Correo o contraseña incorrectos' });
+        }
+
+        const usuario = result.recordset[0];
+
+        if (usuario.estado !== 'Activo') {
+            return res.status(403).json({ success: false, error: 'Esta cuenta está inactiva' });
+        }
+
+        const passwordValida = await bcrypt.compare(password, usuario.password_hash);
+        if (!passwordValida) {
+            return res.status(401).json({ success: false, error: 'Correo o contraseña incorrectos' });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                correo: usuario.correo,
+                rol: usuario.rol,
+                idReferencia: usuario.id_referencia
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Crear cuenta (uso administrativo: el panel de admin la usa para dar de alta usuarios)
+app.post('/api/usuarios', async (req, res) => {
+    try {
+        const { correo, password, rol, idReferencia } = req.body;
+        if (!correo || !password || !rol) {
+            return res.status(400).json({ success: false, error: 'Faltan campos requeridos (correo, password, rol)' });
+        }
+        if (!['admin', 'maestro', 'estudiante'].includes(rol)) {
+            return res.status(400).json({ success: false, error: 'Rol inválido' });
+        }
+        if (password.length < 6) {
+            return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 6 caracteres' });
+        }
+
+        const hash = await bcrypt.hash(password, 10);
+
+        await pool.request()
+            .input('correo', mssql.VarChar(100), correo.toLowerCase().trim())
+            .input('hash', mssql.VarChar(255), hash)
+            .input('rol', mssql.VarChar(20), rol)
+            .input('idReferencia', mssql.Int, idReferencia || null)
+            .query(`
+                INSERT INTO Usuario (correo, password_hash, rol, id_referencia, estado)
+                VALUES (@correo, @hash, @rol, @idReferencia, 'Activo')
+            `);
+
+        res.status(201).json({ success: true, message: 'Cuenta creada' });
+    } catch (error) {
+        if (error.number === 2627) {
+            return res.status(409).json({ success: false, error: 'Ya existe una cuenta con ese correo' });
+        }
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================================================
 // RUTAS DE PRUEBA
 // ============================================================================
 
@@ -115,14 +194,17 @@ app.get('/api/estudiantes', async (req, res) => {
     try {
         const result = await pool.request().query(`
             SELECT 
-                id_estudiante,
-                matricula,
-                nombre,
-                correo,
-                id_carrera,
-                estado
-            FROM Estudiante
-            ORDER BY nombre
+                e.id_estudiante,
+                e.matricula,
+                e.nombre,
+                e.correo,
+                e.id_carrera,
+                c.codigo_carrera AS carreraCodigo,
+                c.nombre_carrera AS carreraNombre,
+                e.estado
+            FROM Estudiante e
+            LEFT JOIN Carrera c ON e.id_carrera = c.id_carrera
+            ORDER BY e.nombre
         `);
         res.json({
             success: true,
@@ -289,6 +371,25 @@ app.post('/api/asignaturas', async (req, res) => {
     }
 });
 
+app.delete('/api/asignaturas/:codigo', async (req, res) => {
+    try {
+        const { codigo } = req.params;
+        const result = await pool.request()
+            .input('codigo', mssql.VarChar(20), codigo)
+            .query('DELETE FROM Asignatura WHERE codigo_asignatura = @codigo');
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ success: false, error: 'Asignatura no encontrada' });
+        }
+        res.json({ success: true, message: 'Asignatura eliminada' });
+    } catch (error) {
+        if (error.number === 547) {
+            return res.status(409).json({ success: false, error: 'No se puede eliminar: esta asignatura tiene secciones o notas asociadas' });
+        }
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ============================================================================
 // ENDPOINTS PARA CARRERAS
 // ============================================================================
@@ -394,13 +495,19 @@ app.get('/api/secciones', async (req, res) => {
                 s.id_seccion AS id,
                 s.numero_seccion AS numero,
                 s.id_asignatura,
+                a.codigo_asignatura AS codigoAsignatura,
+                a.nombre_asignatura AS nombreAsignatura,
                 s.id_profesor,
+                pr.codigo_profesor AS codigoProfesor,
+                pr.nombre AS nombreProfesor,
                 s.id_periodo,
-                p.periodo,
+                per.periodo,
                 s.estado
             FROM Seccion s
-            LEFT JOIN Periodo p ON s.id_periodo = p.id_periodo
-            ORDER BY p.periodo, s.id_asignatura, s.numero_seccion
+            LEFT JOIN Asignatura a ON s.id_asignatura = a.id_asignatura
+            LEFT JOIN Profesor pr ON s.id_profesor = pr.id_profesor
+            LEFT JOIN Periodo per ON s.id_periodo = per.id_periodo
+            ORDER BY per.periodo, a.codigo_asignatura, s.numero_seccion
         `);
         res.json({ success: true, data: result.recordset });
     } catch (error) {
@@ -466,6 +573,25 @@ app.post('/api/secciones', async (req, res) => {
             `);
         res.status(201).json({ success: true, message: 'Sección creada' });
     } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/api/secciones/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await pool.request()
+            .input('id', mssql.Int, id)
+            .query('DELETE FROM Seccion WHERE id_seccion = @id');
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ success: false, error: 'Sección no encontrada' });
+        }
+        res.json({ success: true, message: 'Sección eliminada' });
+    } catch (error) {
+        if (error.number === 547) {
+            return res.status(409).json({ success: false, error: 'No se puede eliminar: esta sección tiene notas asociadas' });
+        }
         res.status(500).json({ success: false, error: error.message });
     }
 });

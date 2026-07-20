@@ -46,6 +46,35 @@ const apiClient = (() => {
     // MÉTODOS PÚBLICOS - ESTUDIANTES
     // ========================================================================
 
+    // ========================================================================
+    // MÉTODOS PÚBLICOS - AUTENTICACIÓN
+    // ========================================================================
+
+    /**
+     * Iniciar sesión
+     * @param {string} correo
+     * @param {string} password
+     * @returns {Promise<Object>} { correo, rol, idReferencia }
+     */
+    async function login(correo, password) {
+        const response = await makeRequest('/login', {
+            method: 'POST',
+            body: JSON.stringify({ correo, password })
+        });
+        return response.data;
+    }
+
+    /**
+     * Crear una cuenta de usuario (uso administrativo)
+     * @param {Object} datos { correo, password, rol, idReferencia }
+     */
+    async function crearUsuario(datos) {
+        return await makeRequest('/usuarios', {
+            method: 'POST',
+            body: JSON.stringify(datos)
+        });
+    }
+
     /**
      * Obtener todos los estudiantes
      * @returns {Promise<Array>} Lista de estudiantes
@@ -96,7 +125,7 @@ const apiClient = (() => {
      * @returns {Promise<Object>} { success, message }
      */
     async function eliminarEstudiante(id) {
-        return await makeRequest(`/estudiantes/${id}`, {
+        return await makeRequest(`/estudiantes/matricula/${id}`, {
             method: 'DELETE'
         });
     }
@@ -121,6 +150,12 @@ const apiClient = (() => {
     async function crearAsignatura(datos) {
         const response = await makeRequest('/asignaturas', { method: 'POST', body: JSON.stringify(datos) });
         return response;
+    }
+
+    async function eliminarAsignatura(codigo) {
+        return await makeRequest(`/asignaturas/${codigo}`, {
+            method: 'DELETE'
+        });
     }
 
     /**
@@ -260,6 +295,12 @@ const apiClient = (() => {
         });
     }
 
+    async function eliminarSeccion(id) {
+        return await makeRequest(`/secciones/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
     // ========================================================================
     // MÉTODOS PÚBLICOS - NOTAS / CALIFICACIONES
     // ========================================================================
@@ -381,6 +422,10 @@ const apiClient = (() => {
     // ========================================================================
 
     return {
+        // Autenticación
+        login,
+        crearUsuario,
+
         // Estudiantes
         getEstudiantes,
         getEstudiante,
@@ -391,6 +436,7 @@ const apiClient = (() => {
         // Asignaturas
         getAsignaturas,
         crearAsignatura,
+        eliminarAsignatura,
         getAsignaturasDelPensum,
 
         // Carreras
@@ -413,6 +459,7 @@ const apiClient = (() => {
         // Secciones
         getSecciones,
         createSeccion,
+        eliminarSeccion,
         // Notas
         getNotas,
         saveNotas,

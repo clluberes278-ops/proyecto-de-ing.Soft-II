@@ -122,40 +122,6 @@
         </button>
       </form>
 
-      <!-- Divisor -->
-      <div class="relative my-8">
-        <div class="absolute inset-0 flex items-center" aria-hidden="true">
-          <div class="w-full border-t border-slate-200"></div>
-        </div>
-        <div class="relative flex justify-center text-xs uppercase">
-          <span class="bg-white px-4 text-slate-400 font-semibold tracking-wider">Acceso Rápido de Prueba</span>
-        </div>
-      </div>
-
-      <!-- Botones de Acceso Rápido -->
-      <div class="grid grid-cols-3 gap-3">
-        <button onclick="accesoRapido('admin@unphu.edu.do')"
-          class="flex flex-col items-center justify-center p-3 rounded-2xl border border-slate-100 hover:border-emerald-500 hover:bg-emerald-50/50 text-slate-700 transition group">
-          <span
-            class="material-symbols-outlined text-2xl text-slate-500 group-hover:scale-110 group-hover:text-emerald-600 transition duration-300">admin_panel_settings</span>
-          <span class="text-[10px] font-bold mt-1.5 text-slate-800 font-title">Administrador</span>
-        </button>
-
-        <button onclick="accesoRapido('profe@unphu.edu.do')"
-          class="flex flex-col items-center justify-center p-3 rounded-2xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50/50 text-slate-700 transition group">
-          <span
-            class="material-symbols-outlined text-2xl text-slate-500 group-hover:scale-110 group-hover:text-indigo-600 transition duration-300">co_present</span>
-          <span class="text-[10px] font-bold mt-1.5 text-slate-800 font-title">Profesor</span>
-        </button>
-
-        <button onclick="accesoRapido('maria@unphu.edu.do')"
-          class="flex flex-col items-center justify-center p-3 rounded-2xl border border-slate-100 hover:border-teal-500 hover:bg-teal-50/50 text-slate-700 transition group">
-          <span
-            class="material-symbols-outlined text-2xl text-slate-500 group-hover:scale-110 group-hover:text-teal-600 transition duration-300">person</span>
-          <span class="text-[10px] font-bold mt-1.5 text-slate-800 font-title">Estudiante</span>
-        </button>
-      </div>
-
       <!-- Pie de página -->
       <div class="mt-8 text-center">
         <p class="text-xs text-slate-400 font-medium">Prototipo de Validación · Universidad Nacional Pedro Henríquez
@@ -174,16 +140,7 @@
       alertDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
-    function accesoRapido(email) {
-      document.getElementById('usuario').value = email;
-      document.getElementById('password').value = '123456';
-
-      setTimeout(() => {
-        document.getElementById('form-login').dispatchEvent(new Event('submit'));
-      }, 300);
-    }
-
-    document.getElementById('form-login').addEventListener('submit', function (e) {
+    document.getElementById('form-login').addEventListener('submit', async function (e) {
       e.preventDefault();
 
       const email = document.getElementById('usuario').value.trim().toLowerCase();
@@ -194,27 +151,28 @@
         return;
       }
 
-      let rol = '';
-      if (email.startsWith('admin@')) {
-        rol = 'admin';
-      } else if (email.startsWith('profe@') || email.includes('maestro@')) {
-        rol = 'maestro';
-      } else if (email.endsWith('@unphu.edu.do')) {
-        rol = 'estudiante';
-      } else {
-        showAlert('Correo no institucional. Utilice una dirección finalizada en @unphu.edu.do');
-        return;
+      const btnSubmit = e.target.querySelector('button[type="submit"]');
+      if (btnSubmit) btnSubmit.disabled = true;
+
+      try {
+        const usuario = await apiClient.login(email, contrasena);
+        localStorage.setItem('taskUni_sesion', JSON.stringify({
+          usuario: usuario.correo,
+          rol: usuario.rol,
+          idReferencia: usuario.idReferencia
+        }));
+
+        const card = document.querySelector('.glass-card');
+        card.classList.add('opacity-0', 'scale-95');
+        card.style.transition = 'all 0.5s ease';
+
+        setTimeout(() => {
+          window.location.href = 'dashboard.html';
+        }, 500);
+      } catch (error) {
+        showAlert(error.message || 'Correo o contraseña incorrectos.');
+        if (btnSubmit) btnSubmit.disabled = false;
       }
-
-      localStorage.setItem('taskUni_sesion', JSON.stringify({ usuario: email, rol: rol }));
-
-      const card = document.querySelector('.glass-card');
-      card.classList.add('opacity-0', 'scale-95');
-      card.style.transition = 'all 0.5s ease';
-
-      setTimeout(() => {
-        window.location.href = 'dashboard.html';
-      }, 500);
     });
 
     document.getElementById('usuario').addEventListener('input', () => {
