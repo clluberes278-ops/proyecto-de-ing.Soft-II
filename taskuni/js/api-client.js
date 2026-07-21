@@ -191,19 +191,19 @@ const apiClient = (() => {
     }
 
     async function getFacultades() {
-    const response = await makeRequest('/facultades');
-    return response.data;
+        const response = await makeRequest('/facultades');
+        return response.data;
     }
 
     async function crearFacultad(datos) {
-    const response = await makeRequest('/facultades', { method: 'POST', body: JSON.stringify(datos) });
-    return response;
+        const response = await makeRequest('/facultades', { method: 'POST', body: JSON.stringify(datos) });
+        return response;
     }
 
     async function eliminarFacultad(codigo) {
-    const response = await makeRequest(`/facultades/${codigo}`, { method: 'DELETE' });
-    return response;
-    }   
+        const response = await makeRequest(`/facultades/${codigo}`, { method: 'DELETE' });
+        return response;
+    }
 
     // ========================================================================
     // MÉTODOS PÚBLICOS - PROFESORES
@@ -321,6 +321,24 @@ const apiClient = (() => {
 
     async function eliminarSeccion(id) {
         return await makeRequest(`/secciones/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
+    async function getEstudiantesDeSeccion(idSeccion) {
+        const response = await makeRequest(`/secciones/${idSeccion}/estudiantes`);
+        return response.data;
+    }
+
+    async function matricularEstudiantes(idSeccion, estudiantes) {
+        return await makeRequest(`/secciones/${idSeccion}/estudiantes`, {
+            method: 'POST',
+            body: JSON.stringify({ estudiantes })
+        });
+    }
+
+    async function desmatricularEstudiante(idSeccion, idEstudiante) {
+        return await makeRequest(`/secciones/${idSeccion}/estudiantes/${idEstudiante}`, {
             method: 'DELETE'
         });
     }
@@ -456,6 +474,12 @@ const apiClient = (() => {
         crearEstudiante,
         actualizarEstudiante,
         eliminarEstudiante,
+        getSecciones,
+        createSeccion,
+        eliminarSeccion,
+        getEstudiantesDeSeccion,
+        matricularEstudiantes,
+        desmatricularEstudiante,
 
         // Asignaturas
         getAsignaturas,
@@ -466,7 +490,7 @@ const apiClient = (() => {
         // Carreras
         getCarreras,
         crearCarrera,
-        
+
         // Facultades
         getFacultades,
         crearFacultad,

@@ -144,7 +144,7 @@ function literalAPuntos(literal) {
 }
 
 function calcularIndiceEstudiante(matricula, notas, asignaturas) {
-  const notasEst = notas.filter(n => n.idEstudiante === matricula);
+  const notasEst = notas.filter(n => n.matriculaEstudiante === matricula);
   if (notasEst.length === 0) return 0.0;
   let totalPts = 0, totalCred = 0;
   notasEst.forEach(nota => {
@@ -224,7 +224,7 @@ async function renderInicio() {
     let sumIndices = 0, totalConIndice = 0, estudiantesEnRojo = 0;
     estudiantes.forEach(est => {
       const ind = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
-      if (notas.some(n => n.idEstudiante === est.matricula)) {
+      if (notas.some(n => n.matriculaEstudiante === est.matricula)) {
         sumIndices += ind;
         totalConIndice++;
       }
@@ -331,7 +331,7 @@ function renderMiniGraficoSemaforo(estudiantes, notas, config) {
   let verde = 0, amarillo = 0, rojo = 0;
   estudiantes.forEach(est => {
     const ind = calcularIndiceEstudiante(est.matricula, notas, []);
-    if (!notas.some(n => n.idEstudiante === est.matricula)) return;
+    if (!notas.some(n => n.matriculaEstudiante === est.matricula)) return;
     if (ind >= config.verde) verde++;
     else if (ind >= config.amarillo) amarillo++;
     else rojo++;
@@ -1401,6 +1401,7 @@ async function renderENT09() {
                 <th class="p-3">Materia</th>
                 <th class="p-3">Sección</th>
                 <th class="p-3">Profesor</th>
+                <th class="p-3">Estudiantes</th>   
                 <th class="p-3 text-right">Acciones</th>
               </tr>
             </thead>
@@ -1437,7 +1438,7 @@ async function actualizarTablaSecciones() {
   try {
     const secciones = await apiClient.getSecciones();
     if (secciones.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No hay secciones registradas.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 italic">No hay secciones registradas.</td></tr>`;
       return;
     }
     tbody.innerHTML = secciones.map(sec => {
@@ -1448,6 +1449,11 @@ async function actualizarTablaSecciones() {
           <td class="p-3 text-slate-800 font-semibold font-mono">${sec.codigoAsignatura}</td>
           <td class="p-3 font-bold text-slate-600">${sec.numero}</td>
           <td class="p-3 text-slate-500">${prof}</td>
+          <td class="p-3">
+            <button onclick="abrirModalMatricula('${sec.id}', '${sec.codigoAsignatura} - Sección ${sec.numero}')" class="px-2.5 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-700 text-slate-600 font-semibold text-[10px] rounded-full transition flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm">group</span> Gestionar
+            </button>
+          </td>
           <td class="p-3 text-right">
             <button onclick="eliminarSeccion('${sec.id}')" class="p-1 text-slate-400 hover:text-rose-500 rounded transition">
               <span class="material-symbols-outlined text-base">delete</span>
@@ -1458,6 +1464,96 @@ async function actualizarTablaSecciones() {
     }).join('');
   } catch (error) {
     showToast('Error al cargar secciones: ' + error.message, 'error');
+  }
+}
+
+// ============================================================
+// MODAL: Matricular estudiantes en una sección
+// (accesible desde ENT-09 · Registro de Secciones)
+// ============================================================
+async function abrirModalMatricula(idSeccion, etiquetaSeccion) {
+  document.getElementById('modal-matricula-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-matricula-overlay';
+  overlay.className = 'fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4';
+  overlay.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
+      <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <h3 class="font-title text-lg font-bold text-slate-800">Estudiantes de la sección</h3>
+          <p class="text-xs text-slate-400">${etiquetaSeccion}</p>
+        </div>
+        <button id="btn-cerrar-modal-matricula" class="p-1 text-slate-400 hover:text-slate-700 rounded transition">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="p-5 border-b border-slate-100">
+        <input type="text" id="modal-matricula-buscar" placeholder="Buscar por nombre o matrícula..." class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500">
+      </div>
+      <div id="modal-matricula-lista" class="p-5 overflow-y-auto flex-1 space-y-1 text-sm text-slate-400 italic">
+        Cargando estudiantes...
+      </div>
+      <div class="p-5 border-t border-slate-100 flex gap-2">
+        <button id="btn-guardar-matricula" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar Cambios</button>
+        <button id="btn-cancelar-matricula" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Cancelar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const cerrar = () => overlay.remove();
+  document.getElementById('btn-cerrar-modal-matricula').addEventListener('click', cerrar);
+  document.getElementById('btn-cancelar-matricula').addEventListener('click', cerrar);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cerrar(); });
+
+  try {
+    const [todos, matriculados] = await Promise.all([
+      apiClient.getEstudiantes(),
+      apiClient.getEstudiantesDeSeccion(idSeccion)
+    ]);
+    const matriculadosSet = new Set(matriculados.map(e => e.matricula));
+
+    const lista = document.getElementById('modal-matricula-lista');
+    const renderLista = (filtro = '') => {
+      const q = filtro.toLowerCase();
+      const filtrados = todos.filter(e => e.nombre.toLowerCase().includes(q) || e.matricula.toLowerCase().includes(q));
+      if (filtrados.length === 0) {
+        lista.innerHTML = `<p class="text-center text-slate-400 italic py-4">Sin resultados.</p>`;
+        return;
+      }
+      lista.innerHTML = filtrados.map(e => `
+        <label class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+          <input type="checkbox" data-matricula="${e.matricula}" ${matriculadosSet.has(e.matricula) ? 'checked' : ''} class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 chk-matricula">
+          <span class="font-mono text-xs font-bold text-slate-500 w-16 shrink-0">${e.matricula}</span>
+          <span class="text-slate-700 font-semibold">${e.nombre}</span>
+        </label>
+      `).join('');
+    };
+    renderLista();
+
+    lista.addEventListener('change', (e) => {
+      const chk = e.target.closest('.chk-matricula');
+      if (!chk) return;
+      if (chk.checked) matriculadosSet.add(chk.dataset.matricula);
+      else matriculadosSet.delete(chk.dataset.matricula);
+    });
+
+    document.getElementById('modal-matricula-buscar').addEventListener('input', function () {
+      renderLista(this.value.trim());
+    });
+
+    document.getElementById('btn-guardar-matricula').addEventListener('click', async () => {
+      try {
+        await apiClient.matricularEstudiantes(idSeccion, Array.from(matriculadosSet));
+        showToast('Estudiantes de la sección actualizados.', 'success');
+        cerrar();
+      } catch (error) {
+        showToast('Error al guardar matrícula: ' + error.message, 'error');
+      }
+    });
+  } catch (error) {
+    document.getElementById('modal-matricula-lista').innerHTML = `<p class="text-rose-500">Error al cargar estudiantes: ${error.message}</p>`;
   }
 }
 
@@ -1585,28 +1681,30 @@ async function renderENT07() {
   });
 }
 
-// ============================================================
-// Funciones auxiliares para ENT-07 (carga de notas)
-// ============================================================
 async function cargarTablaCalificacionesActa() {
   const codAsig = document.getElementById('ent07-select-asignatura').value;
+  const idSeccion = document.getElementById('ent07-select-seccion').value;
   if (!codAsig) return;
+  if (!idSeccion) {
+    showToast('Selecciona una sección antes de cargar el listado.', 'error');
+    return;
+  }
 
   try {
-    const estudiantes = await apiClient.getEstudiantes();
-    const notasDB = await apiClient.getNotas({ asignatura: codAsig });
+    const estudiantes = await apiClient.getEstudiantesDeSeccion(idSeccion);
+    const notasDB = await apiClient.getNotas({ asignatura: codAsig, seccion: idSeccion });
 
     const tbody = document.getElementById('tbl-acta-estudiantes');
     document.getElementById('ent07-contenedor-tabla').classList.remove('hidden');
     document.getElementById('ent07-mensaje-vacio').classList.add('hidden');
 
     if (estudiantes.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400 italic">No hay estudiantes activos en el sistema.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400 italic">Esta sección todavía no tiene estudiantes matriculados. Ve a ENT-09 · Registro de Secciones y usa "Gestionar" para asignarlos.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = estudiantes.map(est => {
-      const notaExistente = notasDB.find(n => n.idEstudiante === est.matricula) || {
+      const notaExistente = notasDB.find(n => n.matriculaEstudiante === est.matricula) || {
         acum1: '', acum2: '', acum3: '', evalFinal: '', notaFinal: 0, literal: '-', estado: '-'
       };
       const finalVal = notaExistente.notaFinal ? notaExistente.notaFinal.toFixed(2) : '0.00';
@@ -2302,7 +2400,7 @@ async function actualizarGridSemaforo() {
     let filtrados = estudiantes.filter(est => {
       const matchesSearch = est.nombre.toLowerCase().includes(searchVal) || est.matricula.includes(searchVal);
       if (!matchesSearch) return false;
-      const notasEst = notas.filter(n => n.idEstudiante === est.matricula);
+      const notasEst = notas.filter(n => n.matriculaEstudiante === est.matricula);
       const tieneNotas = notasEst.length > 0;
       let colorSemaforo = 'sin';
       if (tieneNotas) {
@@ -2322,7 +2420,7 @@ async function actualizarGridSemaforo() {
 
     grid.innerHTML = filtrados.map(est => {
       const ind = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
-      const notasEst = notas.filter(n => n.idEstudiante === est.matricula);
+      const notasEst = notas.filter(n => n.matriculaEstudiante === est.matricula);
       const tieneNotas = notasEst.length > 0;
 
       let colorBadge = 'bg-slate-100 text-slate-500 border-slate-200';

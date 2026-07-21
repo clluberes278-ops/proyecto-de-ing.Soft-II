@@ -189,6 +189,7 @@ async function renderView(viewName) {
     case 'ent07': await renderENT07(); break;
     case 'ent08': await renderENT08(); break;
     case 'ent09': await renderENT09(); break;
+    case 'ent10': await renderENT10(); break;
     case 'rpt01': await renderRPT01(); break;
     case 'rpt04': await renderRPT04(); break;
     case 'rpt05': await renderRPT05(); break;
@@ -404,6 +405,17 @@ async function renderENT01() {
               ${carreras.map(c => `<option value="${c.codigo}">${c.nombre}</option>`).join('')}
             </select>
           </div>
+          <div class="pt-2 border-t border-slate-100">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" id="ent01-crear-cuenta" class="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500">
+              <span class="text-xs font-semibold text-slate-700">También crear cuenta de acceso al sistema</span>
+            </label>
+            <div id="ent01-passwrap" class="mt-2 hidden">
+              <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Contraseña inicial (mín. 6 caracteres)</label>
+              <input type="password" id="ent01-password" placeholder="ej: Maria123" minlength="6" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              <p class="text-[10px] text-slate-400 mt-1 italic">El estudiante podrá cambiarla después de su primer login.</p>
+            </div>
+          </div>
           <div class="flex gap-2">
             <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition shadow shadow-emerald-600/10 font-title">Guardar</button>
             <button type="button" onclick="renderView('inicio')" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Cancelar</button>
@@ -444,12 +456,19 @@ async function renderENT01() {
     actualizarTablaEstudiantes(e.target.value.trim());
   });
 
+  // Toggle mostrar/ocultar input de contraseña según checkbox
+  document.getElementById('ent01-crear-cuenta').addEventListener('change', e => {
+    document.getElementById('ent01-passwrap').classList.toggle('hidden', !e.target.checked);
+  });
+
   document.getElementById('form-ent01').addEventListener('submit', async function (e) {
     e.preventDefault();
     const mat = document.getElementById('ent01-matricula').value.trim();
     const nom = document.getElementById('ent01-nombre').value.trim();
     const cor = document.getElementById('ent01-correo').value.trim().toLowerCase();
     const car = document.getElementById('ent01-carrera').value;
+    const crearCuenta = document.getElementById('ent01-crear-cuenta').checked;
+    const password = document.getElementById('ent01-password').value;
 
     const formatoMatricula = /^\d{2}-\d{4}$/;
     if (!formatoMatricula.test(mat)) {
@@ -465,11 +484,16 @@ async function renderENT01() {
       showToast('Debe ingresar un correo institucional (@unphu.edu.do).', 'error');
       return;
     }
+    if (crearCuenta && password.length < 6) {
+      showToast('La contraseña debe tener al menos 6 caracteres.', 'error');
+      return;
+    }
 
     try {
-      await apiClient.crearEstudiante({ matricula: mat, nombre: nom, correo: cor, id_carrera: car, estado: 'Activo' });
-      showToast('Estudiante registrado con éxito.');
+      const resp = await apiClient.crearEstudiante({ matricula: mat, nombre: nom, correo: cor, id_carrera: car, estado: 'Activo', crearCuenta, password });
+      showToast(resp.message || (crearCuenta ? `Estudiante y cuenta creados. Login: ${cor}` : 'Estudiante registrado con éxito.'), 'success');
       this.reset();
+      document.getElementById('ent01-passwrap').classList.add('hidden');
       await actualizarTablaEstudiantes();
     } catch (error) {
       showToast('Error al guardar: ' + error.message, 'error');
@@ -492,7 +516,9 @@ async function actualizarTablaEstudiantes(filtro = '') {
       return;
     }
     tbody.innerHTML = filtrados.map(est => {
-      const carrera = carreras.find(c => c.codigo === est.carrera)?.nombre || est.carrera;
+      // FIX: backend ya devuelve carreraNombre / carreraCodigo vía JOIN.
+      // Antes hacía lookup por est.carrera (campo inexistente) y mostraba vacío.
+      const carrera = est.carreraNombre || est.carreraCodigo || '— sin carrera —';
       return `
         <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
           <td class="p-3 font-semibold font-mono text-slate-700">${est.matricula}</td>
@@ -794,6 +820,17 @@ async function renderENT04() {
               <option value="Inactivo">Inactivo</option>
             </select>
           </div>
+          <div class="pt-2 border-t border-slate-100">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" id="ent04-crear-cuenta" class="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500">
+              <span class="text-xs font-semibold text-slate-700">También crear cuenta de acceso al sistema</span>
+            </label>
+            <div id="ent04-passwrap" class="mt-2 hidden">
+              <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Contraseña inicial (mín. 6 caracteres)</label>
+              <input type="password" id="ent04-password" placeholder="ej: Maestro123" minlength="6" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              <p class="text-[10px] text-slate-400 mt-1 italic">El profesor podrá cambiarla después de su primer login.</p>
+            </div>
+          </div>
           <div class="flex gap-2">
             <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
             <button type="button" id="btn-buscar-profesor" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Buscar</button>
@@ -809,22 +846,34 @@ async function renderENT04() {
 
   await actualizarGridProfesores();
 
+  // Toggle mostrar/ocultar input de contraseña según checkbox
+  document.getElementById('ent04-crear-cuenta').addEventListener('change', e => {
+    document.getElementById('ent04-passwrap').classList.toggle('hidden', !e.target.checked);
+  });
+
   document.getElementById('form-ent04').addEventListener('submit', async function (e) {
     e.preventDefault();
     const cod = document.getElementById('ent04-codigo').value.trim().toUpperCase();
     const nom = document.getElementById('ent04-nombre').value.trim();
     const cor = document.getElementById('ent04-correo').value.trim().toLowerCase();
     const est = document.getElementById('ent04-estado').value;
+    const crearCuenta = document.getElementById('ent04-crear-cuenta').checked;
+    const password = document.getElementById('ent04-password').value;
 
     const regexCod = /^PRO-\d{3}$/;
     if (!regexCod.test(cod)) {
       showToast('El código debe tener el formato PRO-000.', 'error');
       return;
     }
+    if (crearCuenta && password.length < 6) {
+      showToast('La contraseña debe tener al menos 6 caracteres.', 'error');
+      return;
+    }
     try {
-      await apiClient.crearProfesor({ codigo: cod, nombre: nom, correo: cor, estado: est });
-      showToast('Profesor guardado correctamente.', 'success');
+      const resp = await apiClient.crearProfesor({ codigo: cod, nombre: nom, correo: cor, estado: est, crearCuenta, password });
+      showToast(resp.message || (crearCuenta ? `Profesor y cuenta creados. Login: ${cor}` : 'Profesor guardado correctamente.'), 'success');
       this.reset();
+      document.getElementById('ent04-passwrap').classList.add('hidden');
       await actualizarGridProfesores();
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
@@ -861,12 +910,17 @@ async function actualizarGridProfesores(filtro = '') {
           <div class="w-10 h-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center font-bold text-sm shrink-0 font-title">
             ${p.nombre.split(' ').pop().charAt(0) || 'P'}
           </div>
-          <div class="overflow-hidden">
+          <div class="overflow-hidden flex-1">
             <h4 class="font-bold text-sm text-slate-800 truncate">${p.nombre}</h4>
             <p class="text-xs text-slate-500 truncate">${p.correo}</p>
             <div class="mt-2 flex flex-wrap gap-1 items-center">${materiasBadge}</div>
           </div>
-          <span class="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[8px] font-bold ${p.estado === 'Activo' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'} font-title">${p.estado}</span>
+          <div class="flex flex-col items-end gap-1">
+            <span class="px-1.5 py-0.5 rounded text-[8px] font-bold ${p.estado === 'Activo' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'} font-title">${p.estado}</span>
+            <button type="button" onclick="eliminarProfesor('${p.codigo}')" title="Eliminar profesor" class="mt-1 p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition">
+              <span class="material-symbols-outlined text-base leading-none">delete</span>
+            </button>
+          </div>
         </div>
       `;
     }).join('');
@@ -997,6 +1051,128 @@ async function actualizarTablaCarreras(filtro = '') {
     `).join('');
   } catch (error) {
     showToast('Error al cargar carreras: ' + error.message, 'error');
+
+  }
+}
+
+// ============================================================
+// ENT-10: REGISTRO DE FACULTADES
+// ============================================================
+async function renderENT10() {
+  tituloModulo.textContent = 'ENT-10 · Registro de Facultades';
+
+  contenedor.innerHTML = `
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
+        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+          <span class="material-symbols-outlined text-emerald-600">apartment</span> Nueva Facultad
+        </h3>
+        <form id="form-ent10" class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Código Facultad (ej: FAC-001)</label>
+            <input type="text" id="ent10-codigo" placeholder="FAC-000" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Nombre Facultad</label>
+            <input type="text" id="ent10-nombre" placeholder="Nombre de la facultad" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Estatus</label>
+            <select id="ent10-estado" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+              <option value="Activa">Activa</option>
+              <option value="Inactiva">Inactiva</option>
+            </select>
+          </div>
+          <div class="flex gap-2">
+            <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
+            <button type="button" id="btn-buscar-facultad" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Buscar</button>
+          </div>
+        </form>
+      </div>
+      <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col">
+        <h3 class="font-title text-lg font-bold text-slate-800 pb-4 border-b border-slate-100 mb-4">Facultades Registradas</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase">
+                <th class="p-3">Código</th>
+                <th class="p-3">Nombre</th>
+                <th class="p-3">Estatus</th>
+                <th class="p-3">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbl-facultades"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await actualizarTablaFacultades();
+
+  document.getElementById('form-ent10').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const cod = document.getElementById('ent10-codigo').value.trim().toUpperCase();
+    const nom = document.getElementById('ent10-nombre').value.trim();
+    const est = document.getElementById('ent10-estado').value;
+
+    const regexCod = /^FAC-\d{3}$/;
+    if (!regexCod.test(cod)) {
+      showToast('El código debe tener el formato FAC-000.', 'error');
+      return;
+    }
+    try {
+      await apiClient.crearFacultad({ codigo: cod, nombre: nom, estado: est });
+      showToast('Facultad guardada correctamente.', 'success');
+      this.reset();
+      await actualizarTablaFacultades();
+    } catch (error) {
+      showToast('Error: ' + error.message, 'error');
+    }
+  });
+
+  document.getElementById('btn-buscar-facultad').addEventListener('click', () => {
+    const query = prompt('Buscar facultad:');
+    if (query) actualizarTablaFacultades(query.trim());
+  });
+}
+
+async function actualizarTablaFacultades(filtro = '') {
+  const tbody = document.getElementById('tbl-facultades');
+  if (!tbody) return;
+  try {
+    const facultades = await apiClient.getFacultades();
+    const filtradas = facultades.filter(f => {
+      const q = filtro.toLowerCase();
+      return f.nombre.toLowerCase().includes(q) || f.codigo.toLowerCase().includes(q);
+    });
+    if (filtradas.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-slate-400 italic">No se encontraron facultades.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtradas.map(f => `
+      <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
+        <td class="p-3 font-semibold font-mono text-slate-700">${f.codigo}</td>
+        <td class="p-3 text-slate-800 font-semibold">${f.nombre}</td>
+        <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${f.estado === 'Activa' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}">${f.estado}</span></td>
+        <td class="p-3">
+          <button onclick="eliminarFacultadUI('${f.codigo}')" class="text-rose-600 hover:underline text-xs font-semibold">Eliminar</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (error) {
+    showToast('Error al cargar facultades: ' + error.message, 'error');
+  }
+}
+
+async function eliminarFacultadUI(codigo) {
+  if (!confirm(`¿Eliminar la facultad ${codigo}?`)) return;
+  try {
+    await apiClient.eliminarFacultad(codigo);
+    showToast('Facultad eliminada.', 'success');
+    await actualizarTablaFacultades();
+  } catch (error) {
+    showToast('Error: ' + error.message, 'error');
   }
 }
 
@@ -1224,7 +1400,9 @@ async function renderENT09() {
                 <th class="p-3">Periodo</th>
                 <th class="p-3">Materia</th>
                 <th class="p-3">Sección</th>
+                <th class="p-3">Sección</th>
                 <th class="p-3">Profesor</th>
+                <th class="p-3">Estudiantes</th>   
                 <th class="p-3 text-right">Acciones</th>
               </tr>
             </thead>
@@ -1407,6 +1585,69 @@ async function renderENT07() {
       .join('');
     selSeccion.disabled = false;
   });
+}
+
+async function cargarTablaCalificacionesActa() {
+  const codAsig = document.getElementById('ent07-select-asignatura').value;
+  const idSeccion = document.getElementById('ent07-select-seccion').value;
+  if (!codAsig) return;
+  if (!idSeccion) {
+    showToast('Selecciona una sección antes de cargar el listado.', 'error');
+    return;
+  }
+
+  try {
+    const estudiantes = await apiClient.getEstudiantesDeSeccion(idSeccion);
+    const notasDB = await apiClient.getNotas({ asignatura: codAsig, seccion: idSeccion });
+
+    const tbody = document.getElementById('tbl-acta-estudiantes');
+    document.getElementById('ent07-contenedor-tabla').classList.remove('hidden');
+    document.getElementById('ent07-mensaje-vacio').classList.add('hidden');
+
+    if (estudiantes.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400 italic">Esta sección todavía no tiene estudiantes matriculados. Ve a ENT-09 · Registro de Secciones y usa "Gestionar" para asignarlos.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = estudiantes.map(est => {
+      const notaExistente = notasDB.find(n => n.matriculaEstudiante === est.matricula) || {
+        acum1: '', acum2: '', acum3: '', evalFinal: '', notaFinal: 0, literal: '-', estado: '-'
+      };
+      const finalVal = notaExistente.notaFinal ? notaExistente.notaFinal.toFixed(2) : '0.00';
+      const finalColor = notaExistente.estado === 'Aprobado' ? 'text-emerald-600 font-bold' : (notaExistente.estado === 'Reprobado' ? 'text-rose-600 font-bold' : '');
+      return `
+        <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition align-middle" data-matricula="${est.matricula}">
+          <td class="p-3 font-mono font-bold text-slate-700">${est.matricula}</td>
+          <td class="p-3 text-slate-800 font-bold">${est.nombre}</td>
+          <td class="p-3">
+            <input type="number" min="0" max="100" placeholder="0" value="${notaExistente.acum1}" 
+              class="w-16 px-1.5 py-1 border border-slate-200 rounded text-center text-xs font-semibold focus:ring-1 focus:ring-emerald-500" 
+              oninput="recalcularNotaFila(this)" data-campo="ac1">
+          </td>
+          <td class="p-3">
+            <input type="number" min="0" max="100" placeholder="0" value="${notaExistente.acum2}" 
+              class="w-16 px-1.5 py-1 border border-slate-200 rounded text-center text-xs font-semibold focus:ring-1 focus:ring-emerald-500" 
+              oninput="recalcularNotaFila(this)" data-campo="ac2">
+          </td>
+          <td class="p-3">
+            <input type="number" min="0" max="100" placeholder="0" value="${notaExistente.acum3}" 
+              class="w-16 px-1.5 py-1 border border-slate-200 rounded text-center text-xs font-semibold focus:ring-1 focus:ring-emerald-500" 
+              oninput="recalcularNotaFila(this)" data-campo="ac3">
+          </td>
+          <td class="p-3">
+            <input type="number" min="0" max="100" placeholder="0" value="${notaExistente.evalFinal}" 
+              class="w-16 px-1.5 py-1 border border-slate-200 rounded text-center text-xs font-semibold focus:ring-1 focus:ring-emerald-500" 
+              oninput="recalcularNotaFila(this)" data-campo="final">
+          </td>
+          <td class="p-3 text-sm font-semibold text-slate-700"><span class="nota-final-span ${finalColor}">${finalVal}</span></td>
+          <td class="p-3 text-sm font-bold text-slate-850"><span class="literal-span">${notaExistente.literal}</span></td>
+          <td class="p-3"><span class="estado-badge-span px-2 py-0.5 rounded-full text-[10px] font-bold ${notaExistente.estado === 'Aprobado' ? 'bg-emerald-100 text-emerald-800' : (notaExistente.estado === 'Reprobado' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-500')}">${notaExistente.estado || '-'}</span></td>
+        </tr>
+      `;
+    }).join('');
+  } catch (error) {
+    showToast('Error al cargar acta: ' + error.message, 'error');
+  }
 }
 
 // ============================================================
@@ -1732,7 +1973,9 @@ async function cargarBoletinEstudiante() {
     const est = estudiantes.find(e => e.matricula === selectedStudentIndex);
     if (!est) return;
 
-    const carreraNombre = carreras.find(c => c.codigo === est.carrera)?.nombre || est.carrera;
+    // FIX: backend ya devuelve carreraNombre / carreraCodigo vía JOIN.
+    // Antes hacía lookup por est.carrera (campo inexistente) y mostraba vacío.
+    const carreraNombre = est.carreraNombre || est.carreraCodigo || '— sin carrera —';
     const indice = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
 
     let listadoNotasHTML = '';
@@ -2737,6 +2980,7 @@ function generarMenuLateral(rol) {
       { id: 'ent03', label: '<span class="material-symbols-outlined text-base">calendar_today</span> ENT-03 · Períodos', action: 'ent03' },
       { id: 'ent04', label: '<span class="material-symbols-outlined text-base">co_present</span> ENT-04 · Profesores', action: 'ent04' },
       { id: 'ent05', label: '<span class="material-symbols-outlined text-base">account_balance</span> ENT-05 · Carreras', action: 'ent05' },
+      { id: 'ent10', label: '<span class="material-symbols-outlined text-base">apartment</span> ENT-10 · Facultades', action: 'ent10' },
       { id: 'ent09', label: '<span class="material-symbols-outlined text-base">room_preferences</span> ENT-09 · Registro Sección', action: 'ent09' },
       { id: 'ent06', label: '<span class="material-symbols-outlined text-base">filter_alt</span> ENT-06 · Filtro Reportes', action: 'ent06' },
       { id: 'ent07', label: '<span class="material-symbols-outlined text-base">grade</span> ENT-07 · Carga de Notas', action: 'ent07' },
