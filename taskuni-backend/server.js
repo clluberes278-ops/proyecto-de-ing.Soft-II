@@ -20,6 +20,7 @@ const periodosRouter = require('./routes/periodos');
 const configuracionRouter = require('./routes/configuracion');
 const notasRouter = require('./routes/notas');
 const facultadesRouter = require('./routes/facultades');
+const seccionesEstudiantesRouter = require('./routes/secciones-estudiantes');   // NUEVO
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -82,6 +83,7 @@ app.use('/api/periodos', periodosRouter);
 app.use('/api/configuracion', configuracionRouter);
 app.use('/api/notas', notasRouter);
 app.use('/api/facultades', facultadesRouter);
+app.use('/api/secciones', seccionesEstudiantesRouter);
 // ============================================================================
 // ENDPOINTS DE AUTENTICACIÓN
 // ============================================================================

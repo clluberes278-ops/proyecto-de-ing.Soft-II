@@ -49,6 +49,8 @@ router.get('/', async (req, res) => {
                 n.nota_final,
                 n.nota_literal,
                 n.estado,
+                n.estado,
+                e.matricula AS matricula_estudiante,
                 e.nombre AS nombre_estudiante,
                 a.nombre_asignatura
             FROM Nota n
@@ -95,7 +97,8 @@ router.get('/', async (req, res) => {
             literal: n.nota_literal,
             estado: n.estado,
             nombreEstudiante: n.nombre_estudiante,
-            nombreAsignatura: n.nombre_asignatura
+            nombreAsignatura: n.nombre_asignatura,
+            matriculaEstudiante: n.matricula_estudiante
         }));
 
         res.json({ success: true, data: notas });
