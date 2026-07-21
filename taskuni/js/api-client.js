@@ -190,6 +190,21 @@ const apiClient = (() => {
         return response;
     }
 
+    async function getFacultades() {
+    const response = await makeRequest('/facultades');
+    return response.data;
+    }
+
+    async function crearFacultad(datos) {
+    const response = await makeRequest('/facultades', { method: 'POST', body: JSON.stringify(datos) });
+    return response;
+    }
+
+    async function eliminarFacultad(codigo) {
+    const response = await makeRequest(`/facultades/${codigo}`, { method: 'DELETE' });
+    return response;
+    }   
+
     // ========================================================================
     // MÉTODOS PÚBLICOS - PROFESORES
     // ========================================================================
@@ -451,6 +466,11 @@ const apiClient = (() => {
         // Carreras
         getCarreras,
         crearCarrera,
+        
+        // Facultades
+        getFacultades,
+        crearFacultad,
+        eliminarFacultad,
 
         // Profesores
         getProfesores,

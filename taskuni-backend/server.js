@@ -19,6 +19,7 @@ const PORT = process.env.PORT || 3000;
 const periodosRouter = require('./routes/periodos');
 const configuracionRouter = require('./routes/configuracion');
 const notasRouter = require('./routes/notas');
+const facultadesRouter = require('./routes/facultades');
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -80,7 +81,7 @@ async function initializeDatabase() {
 app.use('/api/periodos', periodosRouter);
 app.use('/api/configuracion', configuracionRouter);
 app.use('/api/notas', notasRouter);
-
+app.use('/api/facultades', facultadesRouter);
 // ============================================================================
 // ENDPOINTS DE AUTENTICACIÓN
 // ============================================================================
@@ -396,7 +397,7 @@ app.get('/api/asignaturas', async (req, res) => {
 // POST /api/asignaturas (crear)
 app.post('/api/asignaturas', async (req, res) => {
     try {
-        const { codigo, nombre, creditos, estado } = req.body;
+        const { codigo, nombre, creditos, estado, id_profesor, id_pensum } = req.body;
         if (!codigo || !nombre || !creditos) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
         }
@@ -406,9 +407,11 @@ app.post('/api/asignaturas', async (req, res) => {
             .input('nombre', mssql.VarChar(100), nombre)
             .input('creditos', mssql.Int, creditos)
             .input('estado', mssql.VarChar(15), estado || 'Activa')
+            .input('id_profesor', mssql.Int, id_profesor || null)
+            .input('id_pensum', mssql.Int, id_pensum || null)
             .query(`
-                INSERT INTO Asignatura (codigo_asignatura, nombre_asignatura, creditos, estado)
-                VALUES (@codigo, @nombre, @creditos, @estado)
+                INSERT INTO Asignatura (codigo_asignatura, nombre_asignatura, creditos, estado, id_profesor, id_pensum)
+                VALUES (@codigo, @nombre, @creditos, @estado, @id_profesor, @id_pensum)
             `);
         res.status(201).json({ success: true, message: 'Asignatura creada' });
     } catch (error) {

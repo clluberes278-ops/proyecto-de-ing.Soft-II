@@ -189,6 +189,7 @@ async function renderView(viewName) {
     case 'ent07': await renderENT07(); break;
     case 'ent08': await renderENT08(); break;
     case 'ent09': await renderENT09(); break;
+    case 'ent10': await renderENT10(); break;
     case 'rpt01': await renderRPT01(); break;
     case 'rpt04': await renderRPT04(); break;
     case 'rpt05': await renderRPT05(); break;
@@ -1050,6 +1051,128 @@ async function actualizarTablaCarreras(filtro = '') {
     `).join('');
   } catch (error) {
     showToast('Error al cargar carreras: ' + error.message, 'error');
+
+  }
+}
+
+// ============================================================
+// ENT-10: REGISTRO DE FACULTADES
+// ============================================================
+async function renderENT10() {
+  tituloModulo.textContent = 'ENT-10 · Registro de Facultades';
+
+  contenedor.innerHTML = `
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
+        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+          <span class="material-symbols-outlined text-emerald-600">apartment</span> Nueva Facultad
+        </h3>
+        <form id="form-ent10" class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Código Facultad (ej: FAC-001)</label>
+            <input type="text" id="ent10-codigo" placeholder="FAC-000" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Nombre Facultad</label>
+            <input type="text" id="ent10-nombre" placeholder="Nombre de la facultad" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Estatus</label>
+            <select id="ent10-estado" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+              <option value="Activa">Activa</option>
+              <option value="Inactiva">Inactiva</option>
+            </select>
+          </div>
+          <div class="flex gap-2">
+            <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
+            <button type="button" id="btn-buscar-facultad" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Buscar</button>
+          </div>
+        </form>
+      </div>
+      <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col">
+        <h3 class="font-title text-lg font-bold text-slate-800 pb-4 border-b border-slate-100 mb-4">Facultades Registradas</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase">
+                <th class="p-3">Código</th>
+                <th class="p-3">Nombre</th>
+                <th class="p-3">Estatus</th>
+                <th class="p-3">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbl-facultades"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await actualizarTablaFacultades();
+
+  document.getElementById('form-ent10').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const cod = document.getElementById('ent10-codigo').value.trim().toUpperCase();
+    const nom = document.getElementById('ent10-nombre').value.trim();
+    const est = document.getElementById('ent10-estado').value;
+
+    const regexCod = /^FAC-\d{3}$/;
+    if (!regexCod.test(cod)) {
+      showToast('El código debe tener el formato FAC-000.', 'error');
+      return;
+    }
+    try {
+      await apiClient.crearFacultad({ codigo: cod, nombre: nom, estado: est });
+      showToast('Facultad guardada correctamente.', 'success');
+      this.reset();
+      await actualizarTablaFacultades();
+    } catch (error) {
+      showToast('Error: ' + error.message, 'error');
+    }
+  });
+
+  document.getElementById('btn-buscar-facultad').addEventListener('click', () => {
+    const query = prompt('Buscar facultad:');
+    if (query) actualizarTablaFacultades(query.trim());
+  });
+}
+
+async function actualizarTablaFacultades(filtro = '') {
+  const tbody = document.getElementById('tbl-facultades');
+  if (!tbody) return;
+  try {
+    const facultades = await apiClient.getFacultades();
+    const filtradas = facultades.filter(f => {
+      const q = filtro.toLowerCase();
+      return f.nombre.toLowerCase().includes(q) || f.codigo.toLowerCase().includes(q);
+    });
+    if (filtradas.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-slate-400 italic">No se encontraron facultades.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtradas.map(f => `
+      <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
+        <td class="p-3 font-semibold font-mono text-slate-700">${f.codigo}</td>
+        <td class="p-3 text-slate-800 font-semibold">${f.nombre}</td>
+        <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${f.estado === 'Activa' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}">${f.estado}</span></td>
+        <td class="p-3">
+          <button onclick="eliminarFacultadUI('${f.codigo}')" class="text-rose-600 hover:underline text-xs font-semibold">Eliminar</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (error) {
+    showToast('Error al cargar facultades: ' + error.message, 'error');
+  }
+}
+
+async function eliminarFacultadUI(codigo) {
+  if (!confirm(`¿Eliminar la facultad ${codigo}?`)) return;
+  try {
+    await apiClient.eliminarFacultad(codigo);
+    showToast('Facultad eliminada.', 'success');
+    await actualizarTablaFacultades();
+  } catch (error) {
+    showToast('Error: ' + error.message, 'error');
   }
 }
 
@@ -2792,6 +2915,7 @@ function generarMenuLateral(rol) {
       { id: 'ent03', label: '<span class="material-symbols-outlined text-base">calendar_today</span> ENT-03 · Períodos', action: 'ent03' },
       { id: 'ent04', label: '<span class="material-symbols-outlined text-base">co_present</span> ENT-04 · Profesores', action: 'ent04' },
       { id: 'ent05', label: '<span class="material-symbols-outlined text-base">account_balance</span> ENT-05 · Carreras', action: 'ent05' },
+      { id: 'ent10', label: '<span class="material-symbols-outlined text-base">apartment</span> ENT-10 · Facultades', action: 'ent10' },
       { id: 'ent09', label: '<span class="material-symbols-outlined text-base">room_preferences</span> ENT-09 · Registro Sección', action: 'ent09' },
       { id: 'ent06', label: '<span class="material-symbols-outlined text-base">filter_alt</span> ENT-06 · Filtro Reportes', action: 'ent06' },
       { id: 'ent07', label: '<span class="material-symbols-outlined text-base">grade</span> ENT-07 · Carga de Notas', action: 'ent07' },
