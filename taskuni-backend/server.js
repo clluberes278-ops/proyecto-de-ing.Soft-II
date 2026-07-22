@@ -21,6 +21,7 @@ const configuracionRouter = require('./routes/configuracion');
 const notasRouter = require('./routes/notas');
 const facultadesRouter = require('./routes/facultades');
 const seccionesEstudiantesRouter = require('./routes/secciones-estudiantes');   // NUEVO
+const carrerasRouter = require('./routes/carreras'); // NUEVO
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -84,6 +85,7 @@ app.use('/api/configuracion', configuracionRouter);
 app.use('/api/notas', notasRouter);
 app.use('/api/facultades', facultadesRouter);
 app.use('/api/secciones', seccionesEstudiantesRouter);
+app.use('/api/carreras', carrerasRouter); // NUEVO
 // ============================================================================
 // ENDPOINTS DE AUTENTICACIÓN
 // ============================================================================
@@ -381,14 +383,17 @@ app.get('/api/asignaturas', async (req, res) => {
     try {
         const result = await pool.request().query(`
             SELECT 
-                id_asignatura,
-                codigo_asignatura AS codigo,
-                nombre_asignatura AS nombre,
-                creditos,
-                id_pensum,
-                estado
-            FROM Asignatura
-            ORDER BY nombre_asignatura
+                a.id_asignatura,
+                a.codigo_asignatura AS codigo,
+                a.nombre_asignatura AS nombre,
+                a.creditos,
+                a.id_pensum,
+                c.nombre_carrera AS carreraNombre,
+                a.estado
+            FROM Asignatura a
+            LEFT JOIN Pensum p ON a.id_pensum = p.id_pensum
+            LEFT JOIN Carrera c ON p.id_carrera = c.id_carrera
+            ORDER BY a.nombre_asignatura
         `);
         res.json({ success: true, data: result.recordset });
     } catch (error) {
@@ -396,12 +401,31 @@ app.get('/api/asignaturas', async (req, res) => {
     }
 });
 
-// POST /api/asignaturas (crear)
 app.post('/api/asignaturas', async (req, res) => {
     try {
-        const { codigo, nombre, creditos, estado, id_profesor, id_pensum } = req.body;
+        const { codigo, nombre, creditos, estado, id_profesor, id_pensum, id_carrera } = req.body;
         if (!codigo || !nombre || !creditos) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+        }
+
+        let targetPensumId = id_pensum || null;
+
+        if (!targetPensumId && id_carrera) {
+            const idCarrera = Number(id_carrera);
+            // Buscar pensum activo de la carrera
+            const pensumResult = await pool.request()
+                .input('idCarrera', mssql.Int, idCarrera)
+                .query("SELECT id_pensum FROM Pensum WHERE id_carrera = @idCarrera AND estado = 'Activo'");
+            
+            if (pensumResult.recordset.length > 0) {
+                targetPensumId = pensumResult.recordset[0].id_pensum;
+            } else {
+                // Crear un pensum activo para esta carrera por defecto
+                const insertPensum = await pool.request()
+                    .input('idCarrera', mssql.Int, idCarrera)
+                    .query("INSERT INTO Pensum (id_carrera, creditos_requeridos, estado) VALUES (@idCarrera, 160, 'Activo'); SELECT SCOPE_IDENTITY() AS id_pensum;");
+                targetPensumId = insertPensum.recordset[0].id_pensum;
+            }
         }
 
         const result = await pool.request()
@@ -410,7 +434,7 @@ app.post('/api/asignaturas', async (req, res) => {
             .input('creditos', mssql.Int, creditos)
             .input('estado', mssql.VarChar(15), estado || 'Activa')
             .input('id_profesor', mssql.Int, id_profesor || null)
-            .input('id_pensum', mssql.Int, id_pensum || null)
+            .input('id_pensum', mssql.Int, targetPensumId)
             .query(`
                 INSERT INTO Asignatura (codigo_asignatura, nombre_asignatura, creditos, estado, id_profesor, id_pensum)
                 VALUES (@codigo, @nombre, @creditos, @estado, @id_profesor, @id_pensum)
@@ -443,48 +467,80 @@ app.delete('/api/asignaturas/:codigo', async (req, res) => {
     }
 });
 
-// ============================================================================
-// ENDPOINTS PARA CARRERAS
-// ============================================================================
-
-app.get('/api/carreras', async (req, res) => {
+// GET /api/estudiantes/:idOrMatricula/pensum
+// Obtiene la carrera, facultad, pensum y asignaturas correspondientes al estudiante
+app.get('/api/estudiantes/:idOrMatricula/pensum', async (req, res) => {
     try {
-        const result = await pool.request().query(`
+        const { idOrMatricula } = req.params;
+
+        // 1. Obtener estudiante y datos de su carrera
+        const queryEstudiante = `
             SELECT 
-                id_carrera,
-                codigo_carrera AS codigo,
-                nombre_carrera AS nombre,
-                facultad,
-                estado
-            FROM Carrera
-            ORDER BY nombre_carrera
-        `);
-        res.json({ success: true, data: result.recordset });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+                e.id_estudiante,
+                e.matricula,
+                e.nombre AS estudianteNombre,
+                c.id_carrera,
+                c.codigo_carrera,
+                c.nombre_carrera,
+                c.facultad
+            FROM Estudiante e
+            INNER JOIN Carrera c ON e.id_carrera = c.id_carrera
+            WHERE e.id_estudiante = @idParam OR e.matricula = @matriculaParam
+        `;
 
-app.post('/api/carreras', async (req, res) => {
-    try {
-        const { codigo, nombre, facultad, estado } = req.body;
-        if (!codigo || !nombre) {
-            return res.status(400).json({ success: false, error: 'Faltan campos requeridos (codigo, nombre)' });
+        const requestEst = pool.request();
+        if (!isNaN(idOrMatricula)) {
+            requestEst.input('idParam', mssql.Int, Number(idOrMatricula));
+            requestEst.input('matriculaParam', mssql.VarChar(20), idOrMatricula);
+        } else {
+            requestEst.input('idParam', mssql.Int, -1);
+            requestEst.input('matriculaParam', mssql.VarChar(20), idOrMatricula);
         }
-        await pool.request()
-            .input('codigo', mssql.VarChar(20), codigo)
-            .input('nombre', mssql.VarChar(100), nombre)
-            .input('facultad', mssql.VarChar(100), facultad || null)
-            .input('estado', mssql.VarChar(15), estado || 'Activa')
+
+        const resEst = await requestEst.query(queryEstudiante);
+        if (resEst.recordset.length === 0) {
+            return res.status(404).json({ success: false, error: 'Estudiante o carrera no encontrados' });
+        }
+
+        const estudiante = resEst.recordset[0];
+
+        // 2. Obtener el pensum activo y las asignaturas pertenecientes a esa carrera
+        const resAsignaturas = await pool.request()
+            .input('idCarrera', mssql.Int, estudiante.id_carrera)
             .query(`
-                INSERT INTO Carrera (codigo_carrera, nombre_carrera, facultad, estado)
-                VALUES (@codigo, @nombre, @facultad, @estado)
+                SELECT 
+                    p.id_pensum,
+                    p.creditos_requeridos,
+                    a.id_asignatura,
+                    a.codigo_asignatura AS codigo,
+                    a.nombre_asignatura AS nombre,
+                    a.creditos,
+                    a.estado
+                FROM Pensum p
+                INNER JOIN Asignatura a ON p.id_pensum = a.id_pensum
+                WHERE p.id_carrera = @idCarrera AND p.estado = 'Activo'
+                ORDER BY a.codigo_asignatura
             `);
-        res.status(201).json({ success: true, message: 'Carrera creada' });
+
+        res.json({
+            success: true,
+            data: {
+                estudiante: {
+                    id: estudiante.id_estudiante,
+                    matricula: estudiante.matricula,
+                    nombre: estudiante.estudianteNombre,
+                    carrera: {
+                        id: estudiante.id_carrera,
+                        codigo: estudiante.codigo_carrera,
+                        nombre: estudiante.nombre_carrera,
+                        facultad: estudiante.facultad
+                    }
+                },
+                asignaturas: resAsignaturas.recordset
+            }
+        });
     } catch (error) {
-        if (error.number === 2627) {
-            return res.status(409).json({ success: false, error: 'Ya existe una carrera con ese código' });
-        }
+        console.error('Error en GET /estudiantes/:idOrMatricula/pensum:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
