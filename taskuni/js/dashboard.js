@@ -556,6 +556,15 @@ async function eliminarEstudiante(matricula) {
 async function renderENT02() {
   tituloModulo.textContent = 'ENT-02 · Registro de Asignaturas';
 
+  let carreras = [];
+  try {
+    carreras = await apiClient.getCarreras();
+  } catch (error) {
+    console.error('Error al cargar carreras:', error);
+  }
+
+  const selectOptions = carreras.map(c => `<option value="${c.id_carrera}">${c.nombre}</option>`).join('');
+
   contenedor.innerHTML = `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
@@ -575,6 +584,13 @@ async function renderENT02() {
             <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Créditos</label>
             <input type="number" id="ent02-creditos" min="1" max="99" placeholder="1-99" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
           </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Carrera / Pensum</label>
+            <select id="ent02-carrera" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+              <option value="">Seleccione Carrera</option>
+              ${selectOptions}
+            </select>
+          </div>
           <div class="flex gap-2">
             <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
             <button type="button" id="btn-buscar-asignatura" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Buscar</button>
@@ -590,6 +606,7 @@ async function renderENT02() {
                 <th class="p-3">Código</th>
                 <th class="p-3">Nombre</th>
                 <th class="p-3">Créditos</th>
+                <th class="p-3">Carrera</th>
                 <th class="p-3 text-right">Acciones</th>
               </tr>
             </thead>
@@ -607,6 +624,7 @@ async function renderENT02() {
     const cod = document.getElementById('ent02-codigo').value.trim().toUpperCase();
     const nom = document.getElementById('ent02-nombre').value.trim();
     const cred = parseInt(document.getElementById('ent02-creditos').value);
+    const carId = document.getElementById('ent02-carrera').value;
 
     const regexCod = /^[A-Z]{3}-\d{3}$/;
     if (!regexCod.test(cod)) {
@@ -614,7 +632,7 @@ async function renderENT02() {
       return;
     }
     try {
-      await apiClient.crearAsignatura({ codigo: cod, nombre: nom, creditos: cred, estado: 'Activa' });
+      await apiClient.crearAsignatura({ codigo: cod, nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa' });
       showToast('Asignatura guardada con éxito.');
       this.reset();
       await actualizarTablaAsignaturas();
@@ -639,15 +657,17 @@ async function actualizarTablaAsignaturas(filtro = '') {
       return a.codigo.toLowerCase().includes(q) || a.nombre.toLowerCase().includes(q);
     });
     if (filtradas.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-slate-400 italic">No se encontraron asignaturas.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No se encontraron asignaturas.</td></tr>`;
       return;
     }
     tbody.innerHTML = filtradas.map(asig => {
+      const carreraStr = asig.carreraNombre || '—';
       return `
         <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
           <td class="p-3 font-semibold font-mono text-slate-700">${asig.codigo}</td>
           <td class="p-3 font-semibold text-slate-800">${asig.nombre}</td>
           <td class="p-3 text-slate-500 font-medium">${asig.creditos} CR</td>
+          <td class="p-3 text-slate-500">${carreraStr}</td>
           <td class="p-3 text-right">
             <button onclick="eliminarAsignatura('${asig.codigo}')" class="p-1 text-slate-400 hover:text-rose-500 rounded transition">
               <span class="material-symbols-outlined text-base">delete</span>
@@ -947,6 +967,14 @@ async function eliminarProfesor(codigo) {
 async function renderENT05() {
   tituloModulo.textContent = 'ENT-05 · Registro de Carreras';
 
+  let selectOptions = '';
+  try {
+    const facultades = await apiClient.getFacultades();
+    selectOptions = facultades.map(f => `<option value="${f.id_facultad}">${f.nombre}</option>`).join('');
+  } catch (error) {
+    console.error('Error al cargar facultades:', error);
+  }
+
   contenedor.innerHTML = `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
@@ -964,7 +992,10 @@ async function renderENT05() {
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Facultad</label>
-            <input type="text" id="ent05-facultad" placeholder="Facultad académica" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+            <select id="ent05-facultad" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
+              <option value="">Seleccione Facultad</option>
+              ${selectOptions}
+            </select>
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Estatus</label>
@@ -1004,7 +1035,7 @@ async function renderENT05() {
     e.preventDefault();
     const cod = document.getElementById('ent05-codigo').value.trim().toUpperCase();
     const nom = document.getElementById('ent05-nombre').value.trim();
-    const fac = document.getElementById('ent05-facultad').value.trim();
+    const facId = document.getElementById('ent05-facultad').value;
     const est = document.getElementById('ent05-estado').value;
 
     const regexCod = /^CAR-\d{3}$/;
@@ -1013,7 +1044,7 @@ async function renderENT05() {
       return;
     }
     try {
-      await apiClient.crearCarrera({ codigo: cod, nombre: nom, facultad: fac, estado: est });
+      await apiClient.crearCarrera({ codigo: cod, nombre: nom, id_facultad: facId, estado: est });
       showToast('Carrera guardada correctamente.', 'success');
       this.reset();
       await actualizarTablaCarreras();
@@ -2447,7 +2478,7 @@ async function actualizarGridSemaforo() {
         }
       }
 
-      const carreraNombre = carreras.find(c => c.codigo === est.carrera)?.nombre || est.carrera;
+      const carreraNombre = est.carreraNombre || est.carreraCodigo || '— sin carrera —';
       const indexPorcentaje = (ind / 4.0) * 100;
 
       return `
@@ -2665,30 +2696,33 @@ async function cargarPensumEstudiante() {
   if (!selectedStudentIndex) return;
 
   try {
-    const [estudiantes, carreras, asignaturas, notas, pensum] = await Promise.all([
+    const [estudiantes, asignaturas, notas] = await Promise.all([
       apiClient.getEstudiantes(),
-      apiClient.getCarreras(),
       apiClient.getAsignaturas(),
-      apiClient.getNotas({ estudiante: selectedStudentIndex }),
-      apiClient.getPensum()
+      apiClient.getNotas({ estudiante: selectedStudentIndex })
     ]);
 
     const est = estudiantes.find(e => e.matricula === selectedStudentIndex);
     if (!est) return;
-    const carreraNombre = carreras.find(c => c.codigo === est.carrera)?.nombre || est.carrera;
+    if (!est.id_carrera) {
+      showToast('Este estudiante no tiene una carrera asignada.', 'error');
+      return;
+    }
+    const carreraNombre = est.carreraNombre || est.carreraCodigo || '—';
 
-    // Filtrar pensum por carrera
-    const pensumCarrera = pensum.filter(p => p.idCarrera === est.carrera);
+    // El backend ya filtra por carrera (GET /api/pensum/:idCarrera), no hace falta filtrar de nuevo aquí
+    const pensumCarrera = await apiClient.getPensum(est.id_carrera);
     let creditosAprobados = 0;
     let creditosPendientes = 0;
-    const totalCreditosRequeridos = pensumCarrera.reduce((sum, p) => sum + p.creditosRequeridos, 0);
+    // creditos_requeridos es el total de la carrera (viene repetido en cada fila del JOIN), no se suma por asignatura
+    const totalCreditosRequeridos = pensumCarrera[0]?.creditos_requeridos || 0;
 
     let asignaturasPensumHTML = '';
     let pendientesListHTML = '';
 
     pensumCarrera.forEach(p => {
-      const asig = asignaturas.find(a => a.codigo === p.idAsignatura) || { nombre: p.idAsignatura, creditos: p.creditosRequeridos };
-      const nota = notas.find(n => n.idAsignatura === p.idAsignatura);
+      const asig = asignaturas.find(a => a.codigo === p.codigo_asignatura) || { codigo: p.codigo_asignatura, nombre: p.nombre_asignatura, creditos: p.creditos };
+      const nota = notas.find(n => n.idAsignatura === p.codigo_asignatura);
 
       let stateColor = 'bg-slate-50 border-slate-200 text-slate-500';
       let stateLabel = 'Pendiente';
@@ -2830,16 +2864,20 @@ async function cargarIndiceYSituacionEstudiante() {
   if (!selectedStudentIndex) return;
 
   try {
-    const [estudiantes, asignaturas, notas, config, pensum] = await Promise.all([
+    const [estudiantes, asignaturas, notas, config] = await Promise.all([
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
       apiClient.getNotas({ estudiante: selectedStudentIndex }),
-      apiClient.getConfiguracion(),
-      apiClient.getPensum()
+      apiClient.getConfiguracion()
     ]);
 
     const est = estudiantes.find(e => e.matricula === selectedStudentIndex);
     if (!est) return;
+    if (!est.id_carrera) {
+      showToast('Este estudiante no tiene una carrera asignada.', 'error');
+      return;
+    }
+    const pensum = await apiClient.getPensum(est.id_carrera);
 
     let totalPtsHonor = 0;
     let totalCreditosConNota = 0;
@@ -2870,16 +2908,17 @@ async function cargarIndiceYSituacionEstudiante() {
     const indice = totalCreditosConNota > 0 ? totalPtsHonor / totalCreditosConNota : 0.0;
     const semaforo = obtenerEstadoSemaforo(indice, config);
 
-    const pensumCarrera = pensum.filter(p => p.idCarrera === est.carrera);
+    // El backend ya filtra por carrera (GET /api/pensum/:idCarrera), pensum ya viene acotado
+    const pensumCarrera = pensum;
     const materiasAprobadas = notas.filter(n => n.estado === 'Aprobado').map(n => n.idAsignatura);
-    const materiasPendientes = pensumCarrera.filter(p => !materiasAprobadas.includes(p.idAsignatura));
+    const materiasPendientes = pensumCarrera.filter(p => !materiasAprobadas.includes(p.codigo_asignatura));
 
     let simuladorSeccionHTML = '';
     if (materiasPendientes.length === 0) {
       simuladorSeccionHTML = `<p class="text-xs text-emerald-600 italic font-bold">Plan de estudios completo.</p>`;
     } else {
       const materiasPendientesDetalle = materiasPendientes.map(p => {
-        const asig = asignaturas.find(a => a.codigo === p.idAsignatura) || { nombre: p.idAsignatura, creditos: p.creditosRequeridos };
+        const asig = asignaturas.find(a => a.codigo === p.codigo_asignatura) || { codigo: p.codigo_asignatura, nombre: p.nombre_asignatura, creditos: p.creditos };
         return `
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-slate-50 border rounded-xl" data-sim-creditos="${asig.creditos}">
             <div>

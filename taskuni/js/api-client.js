@@ -459,6 +459,16 @@ const apiClient = (() => {
         return response.data;
     }
 
+    /**
+    * Obtener el pensum y asignaturas específicas asignadas a un estudiante por su ID o Matrícula
+    * @param {number|string} idOrMatricula 
+    * @returns {Promise<Object>} { estudiante, asignaturas }
+    */
+    async function getPensumPorEstudiante(idOrMatricula) {
+        const response = await makeRequest(`/estudiantes/${idOrMatricula}/pensum`);
+        return response.data;
+    }
+
     // ========================================================================
     // EXPORTAR API PÚBLICA
     // ========================================================================
@@ -526,6 +536,7 @@ const apiClient = (() => {
         // Logs
         registrarLog,
         getPensum,
+        getPensumPorEstudiante,
     };
 })();
 
