@@ -159,6 +159,18 @@ const apiClient = (() => {
     }
 
     /**
+     * Actualizar una asignatura existente
+     * @param {string} codigo - código de la asignatura
+     * @param {Object} datos { nombre, creditos, estado, id_profesor }
+     */
+    async function actualizarAsignatura(codigo, datos) {
+        return await makeRequest(`/asignaturas/${codigo}`, {
+            method: 'PUT',
+            body: JSON.stringify(datos)
+        });
+    }
+
+    /**
      * Obtener asignaturas de un pensum
      * @param {number} idPensum - ID del pensum
      * @returns {Promise<Array>} Asignaturas del pensum
@@ -294,6 +306,30 @@ const apiClient = (() => {
         });
     }
 
+    /**
+     * Actualizar un periodo existente
+     * @param {number} id - id_periodo
+     * @param {Object} data - { periodo, fechaInicio, fechaFin, estado }
+     * @returns {Promise<Object>}
+     */
+    async function actualizarPeriodo(id, data) {
+        return await makeRequest(`/periodos/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    }
+
+    /**
+     * Eliminar un periodo
+     * @param {number} id - id_periodo
+     * @returns {Promise<Object>}
+     */
+    async function eliminarPeriodo(id) {
+        return await makeRequest(`/periodos/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
     // ========================================================================
     // MÉTODOS PÚBLICOS - SECCIONES
     // ========================================================================
@@ -315,6 +351,19 @@ const apiClient = (() => {
     async function createSeccion(data) {
         return await makeRequest('/secciones', {
             method: 'POST',
+            body: JSON.stringify(data)
+        });
+    }
+
+    /**
+     * Actualizar una sección existente
+     * @param {number} id - id_seccion
+     * @param {Object} data - { numero, idAsignatura, idProfesor, periodo }
+     * @returns {Promise<Object>}
+     */
+    async function actualizarSeccion(id, data) {
+        return await makeRequest(`/secciones/${id}`, {
+            method: 'PUT',
             body: JSON.stringify(data)
         });
     }
@@ -494,6 +543,7 @@ const apiClient = (() => {
         // Asignaturas
         getAsignaturas,
         crearAsignatura,
+        actualizarAsignatura,
         eliminarAsignatura,
         getAsignaturasDelPensum,
 
@@ -520,9 +570,12 @@ const apiClient = (() => {
         // Periodos
         getPeriodos,
         createPeriodo,
+        actualizarPeriodo,
+        eliminarPeriodo,
         // Secciones
         getSecciones,
         createSeccion,
+        actualizarSeccion,
         eliminarSeccion,
         // Notas
         getNotas,

@@ -81,4 +81,87 @@ router.post('/', async (req, res) => {
     }
 });
 
+// ============================================================================
+// PUT /api/periodos/:id - Actualizar un periodo existente
+// Body esperado: { periodo, fechaInicio, fechaFin, estado }
+// ============================================================================
+router.put('/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { periodo, fechaInicio, fechaFin, estado } = req.body;
+
+        if (!periodo || !fechaInicio || !fechaFin) {
+            return res.status(400).json({
+                success: false,
+                error: 'Los campos periodo, fechaInicio y fechaFin son requeridos'
+            });
+        }
+
+        const pool = await getConnection();
+
+        // Si este periodo pasa a Activo, cerrar los demás
+        if ((estado || 'Activo') === 'Activo') {
+            await pool.request()
+                .input('id', sql.Int, id)
+                .query("UPDATE Periodo SET estado = 'Cerrado' WHERE id_periodo <> @id");
+        }
+
+        const query = `
+            UPDATE Periodo
+            SET periodo = @periodo,
+                fecha_inicio = @fechaInicio,
+                fecha_fin = @fechaFin,
+                estado = @estado
+            WHERE id_periodo = @id
+        `;
+
+        const result = await pool.request()
+            .input('id', sql.Int, id)
+            .input('periodo', sql.VarChar(20), periodo)
+            .input('fechaInicio', sql.Date, fechaInicio)
+            .input('fechaFin', sql.Date, fechaFin)
+            .input('estado', sql.VarChar(15), estado || 'Activo')
+            .query(query);
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ success: false, error: 'Periodo no encontrado' });
+        }
+
+        res.json({ success: true, message: 'Periodo actualizado' });
+    } catch (error) {
+        console.error('Error en PUT /periodos/:id:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================================================
+// DELETE /api/periodos/:id - Eliminar un periodo
+// ============================================================================
+router.delete('/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const pool = await getConnection();
+
+        const result = await pool.request()
+            .input('id', sql.Int, id)
+            .query('DELETE FROM Periodo WHERE id_periodo = @id');
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ success: false, error: 'Periodo no encontrado' });
+        }
+
+        res.json({ success: true, message: 'Periodo eliminado' });
+    } catch (error) {
+        console.error('Error en DELETE /periodos/:id:', error);
+        // Violación de FK (número 547 en SQL Server): el periodo tiene secciones asociadas
+        if (error.number === 547) {
+            return res.status(409).json({
+                success: false,
+                error: 'No se puede eliminar: este periodo tiene secciones asociadas'
+            });
+        }
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

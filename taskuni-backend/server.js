@@ -388,6 +388,7 @@ app.get('/api/asignaturas', async (req, res) => {
                 a.nombre_asignatura AS nombre,
                 a.creditos,
                 a.id_pensum,
+                c.id_carrera,
                 c.nombre_carrera AS carreraNombre,
                 a.estado
             FROM Asignatura a
@@ -444,6 +445,59 @@ app.post('/api/asignaturas', async (req, res) => {
         if (error.number === 2627) {
             return res.status(409).json({ success: false, error: 'Ya existe una asignatura con ese código' });
         }
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.put('/api/asignaturas/:codigo', async (req, res) => {
+    try {
+        const { codigo } = req.params;
+        const { nombre, creditos, estado, id_profesor, id_pensum, id_carrera } = req.body;
+
+        if (!nombre || !creditos) {
+            return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+        }
+
+        let targetPensumId = id_pensum || null;
+
+        if (!targetPensumId && id_carrera) {
+            const idCarrera = Number(id_carrera);
+            const pensumResult = await pool.request()
+                .input('idCarrera', mssql.Int, idCarrera)
+                .query("SELECT id_pensum FROM Pensum WHERE id_carrera = @idCarrera AND estado = 'Activo'");
+
+            if (pensumResult.recordset.length > 0) {
+                targetPensumId = pensumResult.recordset[0].id_pensum;
+            } else {
+                const insertPensum = await pool.request()
+                    .input('idCarrera', mssql.Int, idCarrera)
+                    .query("INSERT INTO Pensum (id_carrera, creditos_requeridos, estado) VALUES (@idCarrera, 160, 'Activo'); SELECT SCOPE_IDENTITY() AS id_pensum;");
+                targetPensumId = insertPensum.recordset[0].id_pensum;
+            }
+        }
+
+        const result = await pool.request()
+            .input('codigo', mssql.VarChar(20), codigo)
+            .input('nombre', mssql.VarChar(100), nombre)
+            .input('creditos', mssql.Int, creditos)
+            .input('estado', mssql.VarChar(15), estado || 'Activa')
+            .input('id_profesor', mssql.Int, id_profesor || null)
+            .input('id_pensum', mssql.Int, targetPensumId)
+            .query(`
+                UPDATE Asignatura
+                SET nombre_asignatura = @nombre,
+                    creditos = @creditos,
+                    estado = @estado,
+                    id_profesor = @id_profesor,
+                    id_pensum = @id_pensum
+                WHERE codigo_asignatura = @codigo
+            `);
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ success: false, error: 'Asignatura no encontrada' });
+        }
+        res.json({ success: true, message: 'Asignatura actualizada' });
+    } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -747,6 +801,74 @@ app.post('/api/secciones', async (req, res) => {
                 VALUES (@numero, @idAsignatura, @idProfesor, @idPeriodo, @estado)
             `);
         res.status(201).json({ success: true, message: 'Sección creada' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.put('/api/secciones/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { numero, idAsignatura, idProfesor, periodo } = req.body;
+        if (!numero || !idAsignatura || !periodo) {
+            return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
+        }
+
+        const periodoResult = await pool.request()
+            .input('periodo', mssql.VarChar(20), periodo)
+            .query('SELECT id_periodo FROM Periodo WHERE periodo = @periodo');
+        if (periodoResult.recordset.length === 0) {
+            return res.status(400).json({ success: false, error: 'Periodo no encontrado' });
+        }
+        const idPeriodo = periodoResult.recordset[0].id_periodo;
+
+        let idAsignaturaNum;
+        if (!isNaN(idAsignatura)) {
+            idAsignaturaNum = Number(idAsignatura);
+        } else {
+            const asigResult = await pool.request()
+                .input('codigo', mssql.VarChar(20), idAsignatura)
+                .query('SELECT id_asignatura FROM Asignatura WHERE codigo_asignatura = @codigo');
+            if (asigResult.recordset.length === 0) {
+                return res.status(400).json({ success: false, error: `Asignatura no encontrada: ${idAsignatura}` });
+            }
+            idAsignaturaNum = asigResult.recordset[0].id_asignatura;
+        }
+
+        let idProfesorNum = null;
+        if (idProfesor) {
+            if (!isNaN(idProfesor)) {
+                idProfesorNum = Number(idProfesor);
+            } else {
+                const profResult = await pool.request()
+                    .input('codigo', mssql.VarChar(20), idProfesor)
+                    .query('SELECT id_profesor FROM Profesor WHERE codigo_profesor = @codigo');
+                if (profResult.recordset.length === 0) {
+                    return res.status(400).json({ success: false, error: `Profesor no encontrado: ${idProfesor}` });
+                }
+                idProfesorNum = profResult.recordset[0].id_profesor;
+            }
+        }
+
+        const result = await pool.request()
+            .input('id', mssql.Int, id)
+            .input('numero', mssql.Int, numero)
+            .input('idAsignatura', mssql.Int, idAsignaturaNum)
+            .input('idProfesor', mssql.Int, idProfesorNum)
+            .input('idPeriodo', mssql.Int, idPeriodo)
+            .query(`
+                UPDATE Seccion
+                SET numero_seccion = @numero,
+                    id_asignatura = @idAsignatura,
+                    id_profesor = @idProfesor,
+                    id_periodo = @idPeriodo
+                WHERE id_seccion = @id
+            `);
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ success: false, error: 'Sección no encontrada' });
+        }
+        res.json({ success: true, message: 'Sección actualizada' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

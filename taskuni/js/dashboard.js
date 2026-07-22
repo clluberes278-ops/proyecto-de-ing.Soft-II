@@ -551,10 +551,14 @@ async function eliminarEstudiante(matricula) {
 }
 
 // ============================================================
+// ============================================================
 // 3. ENT-02: REGISTRO DE ASIGNATURAS
 // ============================================================
+let asignaturaEditandoCodigo = null;
+
 async function renderENT02() {
   tituloModulo.textContent = 'ENT-02 · Registro de Asignaturas';
+  asignaturaEditandoCodigo = null;
 
   let carreras = [];
   try {
@@ -568,7 +572,7 @@ async function renderENT02() {
   contenedor.innerHTML = `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
-        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+        <h3 id="ent02-form-titulo" class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
           <span class="material-symbols-outlined text-emerald-600">book</span> Nueva Asignatura
         </h3>
         <form id="form-ent02" class="space-y-4">
@@ -592,9 +596,10 @@ async function renderENT02() {
             </select>
           </div>
           <div class="flex gap-2">
-            <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
-            <button type="button" id="btn-buscar-asignatura" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Buscar</button>
+            <button type="submit" id="ent02-btn-guardar" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
+            <button type="button" id="ent02-btn-cancelar" onclick="cancelarEdicionAsignatura()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Cancelar</button>
           </div>
+          <button type="button" id="btn-buscar-asignatura" class="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-500 font-semibold text-xs rounded-lg transition font-title">Buscar</button>
         </form>
       </div>
       <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
@@ -632,9 +637,15 @@ async function renderENT02() {
       return;
     }
     try {
-      await apiClient.crearAsignatura({ codigo: cod, nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa' });
-      showToast('Asignatura guardada con éxito.');
-      this.reset();
+      if (asignaturaEditandoCodigo) {
+        await apiClient.actualizarAsignatura(asignaturaEditandoCodigo, { nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa' });
+        showToast('Asignatura actualizada con éxito.');
+        cancelarEdicionAsignatura();
+      } else {
+        await apiClient.crearAsignatura({ codigo: cod, nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa' });
+        showToast('Asignatura guardada con éxito.');
+        this.reset();
+      }
       await actualizarTablaAsignaturas();
     } catch (error) {
       showToast('Error al guardar: ' + error.message, 'error');
@@ -647,11 +658,50 @@ async function renderENT02() {
   });
 }
 
+function editarAsignatura(codigo) {
+  const asig = asignaturasCache.find(a => a.codigo === codigo);
+  if (!asig) return;
+
+  asignaturaEditandoCodigo = codigo;
+  const codigoInput = document.getElementById('ent02-codigo');
+  codigoInput.value = asig.codigo;
+  codigoInput.disabled = true;
+  document.getElementById('ent02-nombre').value = asig.nombre || '';
+  document.getElementById('ent02-creditos').value = asig.creditos || '';
+  document.getElementById('ent02-carrera').value = asig.id_carrera || '';
+
+  document.getElementById('ent02-form-titulo').innerHTML =
+    '<span class="material-symbols-outlined text-emerald-600">edit</span> Editar Asignatura';
+  document.getElementById('ent02-btn-guardar').textContent = 'Actualizar';
+  document.getElementById('ent02-btn-cancelar').textContent = 'Cancelar edición';
+
+  document.getElementById('form-ent02').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelarEdicionAsignatura() {
+  asignaturaEditandoCodigo = null;
+  const form = document.getElementById('form-ent02');
+  if (form) form.reset();
+
+  const codigoInput = document.getElementById('ent02-codigo');
+  if (codigoInput) codigoInput.disabled = false;
+
+  const titulo = document.getElementById('ent02-form-titulo');
+  const btnGuardar = document.getElementById('ent02-btn-guardar');
+  const btnCancelar = document.getElementById('ent02-btn-cancelar');
+  if (titulo) titulo.innerHTML = '<span class="material-symbols-outlined text-emerald-600">book</span> Nueva Asignatura';
+  if (btnGuardar) btnGuardar.textContent = 'Guardar';
+  if (btnCancelar) btnCancelar.textContent = 'Cancelar';
+}
+
+let asignaturasCache = [];
+
 async function actualizarTablaAsignaturas(filtro = '') {
   const tbody = document.getElementById('tbl-asignaturas');
   if (!tbody) return;
   try {
     const asignaturas = await apiClient.getAsignaturas();
+    asignaturasCache = asignaturas;
     const filtradas = asignaturas.filter(a => {
       const q = filtro.toLowerCase();
       return a.codigo.toLowerCase().includes(q) || a.nombre.toLowerCase().includes(q);
@@ -668,7 +718,10 @@ async function actualizarTablaAsignaturas(filtro = '') {
           <td class="p-3 font-semibold text-slate-800">${asig.nombre}</td>
           <td class="p-3 text-slate-500 font-medium">${asig.creditos} CR</td>
           <td class="p-3 text-slate-500">${carreraStr}</td>
-          <td class="p-3 text-right">
+          <td class="p-3 text-right whitespace-nowrap">
+            <button onclick="editarAsignatura('${asig.codigo}')" class="p-1 text-slate-400 hover:text-emerald-600 rounded transition">
+              <span class="material-symbols-outlined text-base">edit</span>
+            </button>
             <button onclick="eliminarAsignatura('${asig.codigo}')" class="p-1 text-slate-400 hover:text-rose-500 rounded transition">
               <span class="material-symbols-outlined text-base">delete</span>
             </button>
@@ -686,6 +739,7 @@ async function eliminarAsignatura(codigo) {
     try {
       await apiClient.eliminarAsignatura(codigo);
       showToast('Asignatura eliminada.', 'success');
+      if (asignaturaEditandoCodigo === codigo) cancelarEdicionAsignatura();
       await actualizarTablaAsignaturas();
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
@@ -696,13 +750,16 @@ async function eliminarAsignatura(codigo) {
 // ============================================================
 // 4. ENT-03: REGISTRO DE PERÍODOS
 // ============================================================
+let periodoEditandoId = null;
+let periodosCache = [];
+
 async function renderENT03() {
   tituloModulo.textContent = 'ENT-03 · Registro de Periodos';
 
   contenedor.innerHTML = `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
-        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+        <h3 id="ent03-form-titulo" class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
           <span class="material-symbols-outlined text-emerald-600">calendar_today</span> Nuevo Período
         </h3>
         <form id="form-ent03" class="space-y-4">
@@ -732,8 +789,8 @@ async function renderENT03() {
             </select>
           </div>
           <div class="flex gap-2">
-            <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
-            <button type="button" onclick="renderView('inicio')" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Cancelar</button>
+            <button type="submit" id="ent03-btn-guardar" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar</button>
+            <button type="button" id="ent03-btn-cancelar" onclick="cancelarEdicionPeriodo()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Cancelar</button>
           </div>
         </form>
       </div>
@@ -748,6 +805,7 @@ async function renderENT03() {
                 <th class="p-3">Inicio</th>
                 <th class="p-3">Fin</th>
                 <th class="p-3">Estado</th>
+                <th class="p-3 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody id="tbl-periodos"></tbody>
@@ -757,6 +815,7 @@ async function renderENT03() {
     </div>
   `;
 
+  periodoEditandoId = null;
   await actualizarTablaPeriodos();
 
   document.getElementById('form-ent03').addEventListener('submit', async function (e) {
@@ -772,9 +831,15 @@ async function renderENT03() {
       return;
     }
     try {
-      await apiClient.createPeriodo({ periodo: per, cuatrimestre: cuat, fechaInicio: ini, fechaFin: fin, estado: est });
-      showToast('Período registrado correctamente.');
-      this.reset();
+      if (periodoEditandoId) {
+        await apiClient.actualizarPeriodo(periodoEditandoId, { periodo: per, cuatrimestre: cuat, fechaInicio: ini, fechaFin: fin, estado: est });
+        showToast('Período actualizado correctamente.');
+        cancelarEdicionPeriodo();
+      } else {
+        await apiClient.createPeriodo({ periodo: per, cuatrimestre: cuat, fechaInicio: ini, fechaFin: fin, estado: est });
+        showToast('Período registrado correctamente.');
+        this.reset();
+      }
       await actualizarTablaPeriodos();
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
@@ -782,13 +847,58 @@ async function renderENT03() {
   });
 }
 
+function editarPeriodo(id) {
+  const p = periodosCache.find(x => x.id_periodo === id);
+  if (!p) return;
+
+  periodoEditandoId = id;
+  document.getElementById('ent03-periodo').value = p.periodo || '';
+  document.getElementById('ent03-cuatrimestre').value = p.cuatrimestre || '';
+  document.getElementById('ent03-inicio').value = (p.fechaInicio || '').substring(0, 10);
+  document.getElementById('ent03-fin').value = (p.fechaFin || '').substring(0, 10);
+  document.getElementById('ent03-estado').value = p.estado || 'Activo';
+
+  document.getElementById('ent03-form-titulo').innerHTML =
+    '<span class="material-symbols-outlined text-emerald-600">edit_calendar</span> Editar Período';
+  document.getElementById('ent03-btn-guardar').textContent = 'Actualizar';
+  document.getElementById('ent03-btn-cancelar').textContent = 'Cancelar edición';
+
+  document.getElementById('form-ent03').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelarEdicionPeriodo() {
+  periodoEditandoId = null;
+  const form = document.getElementById('form-ent03');
+  if (form) form.reset();
+
+  const titulo = document.getElementById('ent03-form-titulo');
+  const btnGuardar = document.getElementById('ent03-btn-guardar');
+  const btnCancelar = document.getElementById('ent03-btn-cancelar');
+  if (titulo) titulo.innerHTML = '<span class="material-symbols-outlined text-emerald-600">calendar_today</span> Nuevo Período';
+  if (btnGuardar) btnGuardar.textContent = 'Guardar';
+  if (btnCancelar) btnCancelar.textContent = 'Cancelar';
+}
+
+async function eliminarPeriodo(id, codigo) {
+  if (!confirm(`¿Eliminar el período ${codigo}? Esta acción no se puede deshacer.`)) return;
+  try {
+    await apiClient.eliminarPeriodo(id);
+    showToast('Período eliminado.');
+    if (periodoEditandoId === id) cancelarEdicionPeriodo();
+    await actualizarTablaPeriodos();
+  } catch (error) {
+    showToast('Error al eliminar: ' + error.message, 'error');
+  }
+}
+
 async function actualizarTablaPeriodos() {
   const tbody = document.getElementById('tbl-periodos');
   if (!tbody) return;
   try {
     const periodos = await apiClient.getPeriodos();
+    periodosCache = periodos;
     if (periodos.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No hay períodos registrados.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 italic">No hay períodos registrados.</td></tr>`;
       return;
     }
     tbody.innerHTML = periodos.map(p => {
@@ -796,10 +906,18 @@ async function actualizarTablaPeriodos() {
       return `
         <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
           <td class="p-3 font-semibold font-mono text-slate-700">${p.periodo}</td>
-          <td class="p-3 text-slate-800 font-semibold">${p.cuatrimestre}</td>
+          <td class="p-3 text-slate-800 font-semibold">${p.cuatrimestre || ''}</td>
           <td class="p-3 text-slate-500 font-mono">${p.fechaInicio}</td>
           <td class="p-3 text-slate-500 font-mono">${p.fechaFin}</td>
           <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeColor}">${p.estado}</span></td>
+          <td class="p-3 text-right whitespace-nowrap">
+            <button onclick="editarPeriodo(${p.id_periodo})" class="p-1 text-slate-400 hover:text-emerald-600 rounded transition">
+              <span class="material-symbols-outlined text-base">edit</span>
+            </button>
+            <button onclick="eliminarPeriodo(${p.id_periodo}, '${p.periodo}')" class="p-1 text-slate-400 hover:text-rose-500 rounded transition">
+              <span class="material-symbols-outlined text-base">delete</span>
+            </button>
+          </td>
         </tr>
       `;
     }).join('');
@@ -1381,8 +1499,12 @@ function verIndiceEstudianteDesdeRojo(mat) {
 // ============================================================
 // 8. ENT-09: REGISTRO DE SECCIÓN
 // ============================================================
+let seccionEditandoId = null;
+let seccionesCache = [];
+
 async function renderENT09() {
   tituloModulo.textContent = 'ENT-09 · Registro de Secciones';
+  seccionEditandoId = null;
 
   const periodos = await apiClient.getPeriodos();
   const asignaturas = await apiClient.getAsignaturas();
@@ -1391,7 +1513,7 @@ async function renderENT09() {
   contenedor.innerHTML = `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
-        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+        <h3 id="ent09-form-titulo" class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
           <span class="material-symbols-outlined text-emerald-600">room_preferences</span> Nueva Sección
         </h3>
         <form id="form-ent09" class="space-y-4">
@@ -1419,7 +1541,8 @@ async function renderENT09() {
               ${profesores.map(p => `<option value="${p.codigo}">${p.nombre}</option>`).join('')}
             </select>
           </div>
-          <button type="submit" class="w-full mt-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition shadow font-title">Guardar Sección</button>
+          <button type="submit" id="ent09-btn-guardar" class="w-full mt-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition shadow font-title">Guardar Sección</button>
+          <button type="button" id="ent09-btn-cancelar" onclick="cancelarEdicionSeccion()" class="w-full mt-2 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title hidden">Cancelar edición</button>
         </form>
       </div>
       <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col">
@@ -1453,9 +1576,15 @@ async function renderENT09() {
     const prof = document.getElementById('ent09-profesor').value;
 
     try {
-      await apiClient.createSeccion({ numero: num, idAsignatura: asig, idProfesor: prof, periodo: per });
-      showToast('Sección registrada correctamente.');
-      this.reset();
+      if (seccionEditandoId) {
+        await apiClient.actualizarSeccion(seccionEditandoId, { numero: num, idAsignatura: asig, idProfesor: prof, periodo: per });
+        showToast('Sección actualizada correctamente.');
+        cancelarEdicionSeccion();
+      } else {
+        await apiClient.createSeccion({ numero: num, idAsignatura: asig, idProfesor: prof, periodo: per });
+        showToast('Sección registrada correctamente.');
+        this.reset();
+      }
       await actualizarTablaSecciones();
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
@@ -1463,11 +1592,43 @@ async function renderENT09() {
   });
 }
 
+function editarSeccion(id) {
+  const sec = seccionesCache.find(s => String(s.id) === String(id));
+  if (!sec) return;
+
+  seccionEditandoId = id;
+  document.getElementById('ent09-periodo').value = sec.periodo || '';
+  document.getElementById('ent09-asignatura').value = sec.codigoAsignatura || '';
+  document.getElementById('ent09-numero').value = sec.numero || '';
+  document.getElementById('ent09-profesor').value = sec.codigoProfesor || '';
+
+  document.getElementById('ent09-form-titulo').innerHTML =
+    '<span class="material-symbols-outlined text-emerald-600">edit</span> Editar Sección';
+  document.getElementById('ent09-btn-guardar').textContent = 'Actualizar Sección';
+  document.getElementById('ent09-btn-cancelar').classList.remove('hidden');
+
+  document.getElementById('form-ent09').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelarEdicionSeccion() {
+  seccionEditandoId = null;
+  const form = document.getElementById('form-ent09');
+  if (form) form.reset();
+
+  const titulo = document.getElementById('ent09-form-titulo');
+  const btnGuardar = document.getElementById('ent09-btn-guardar');
+  const btnCancelar = document.getElementById('ent09-btn-cancelar');
+  if (titulo) titulo.innerHTML = '<span class="material-symbols-outlined text-emerald-600">room_preferences</span> Nueva Sección';
+  if (btnGuardar) btnGuardar.textContent = 'Guardar Sección';
+  if (btnCancelar) btnCancelar.classList.add('hidden');
+}
+
 async function actualizarTablaSecciones() {
   const tbody = document.getElementById('tbl-secciones');
   if (!tbody) return;
   try {
     const secciones = await apiClient.getSecciones();
+    seccionesCache = secciones;
     if (secciones.length === 0) {
       tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 italic">No hay secciones registradas.</td></tr>`;
       return;
@@ -1485,7 +1646,10 @@ async function actualizarTablaSecciones() {
               <span class="material-symbols-outlined text-sm">group</span> Gestionar
             </button>
           </td>
-          <td class="p-3 text-right">
+          <td class="p-3 text-right whitespace-nowrap">
+            <button onclick="editarSeccion('${sec.id}')" class="p-1 text-slate-400 hover:text-emerald-600 rounded transition">
+              <span class="material-symbols-outlined text-base">edit</span>
+            </button>
             <button onclick="eliminarSeccion('${sec.id}')" class="p-1 text-slate-400 hover:text-rose-500 rounded transition">
               <span class="material-symbols-outlined text-base">delete</span>
             </button>
