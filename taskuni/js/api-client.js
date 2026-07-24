@@ -379,6 +379,9 @@ const apiClient = (() => {
         return response.data;
     }
 
+    // [DEPRECADO] Antes usado por admin/profesor para fijar en bloque el
+    // listado de una sección. Ya no se llama desde ninguna vista del
+    // frontend; se mantiene solo por compatibilidad con el endpoint.
     async function matricularEstudiantes(idSeccion, estudiantes) {
         return await makeRequest(`/secciones/${idSeccion}/estudiantes`, {
             method: 'POST',
@@ -386,10 +389,30 @@ const apiClient = (() => {
         });
     }
 
+    /**
+     * Auto-inscripción: el propio estudiante se inscribe en una sección.
+     * @param {number} idSeccion
+     * @param {number|string} idEstudiante - id numérico o matrícula
+     */
+    async function inscribirseEnSeccion(idSeccion, idEstudiante) {
+        return await makeRequest(`/secciones/${idSeccion}/estudiantes/${idEstudiante}`, {
+            method: 'POST'
+        });
+    }
+
     async function desmatricularEstudiante(idSeccion, idEstudiante) {
         return await makeRequest(`/secciones/${idSeccion}/estudiantes/${idEstudiante}`, {
             method: 'DELETE'
         });
+    }
+
+    /**
+     * Secciones en las que un estudiante está inscrito actualmente.
+     * @param {number|string} idEstudiante - id numérico o matrícula
+     */
+    async function getSeccionesDeEstudiante(idEstudiante) {
+        const response = await makeRequest(`/secciones/estudiante/${idEstudiante}`);
+        return response.data;
     }
 
     // ========================================================================
@@ -538,7 +561,9 @@ const apiClient = (() => {
         eliminarSeccion,
         getEstudiantesDeSeccion,
         matricularEstudiantes,
+        inscribirseEnSeccion,
         desmatricularEstudiante,
+        getSeccionesDeEstudiante,
 
         // Asignaturas
         getAsignaturas,

@@ -190,6 +190,7 @@ async function renderView(viewName) {
     case 'ent08': await renderENT08(); break;
     case 'ent09': await renderENT09(); break;
     case 'ent10': await renderENT10(); break;
+    case 'ent11': await renderENT11(); break;
     case 'rpt01': await renderRPT01(); break;
     case 'rpt04': await renderRPT04(); break;
     case 'rpt05': await renderRPT05(); break;
@@ -1555,7 +1556,6 @@ async function renderENT09() {
                 <th class="p-3">Materia</th>
                 <th class="p-3">Sección</th>
                 <th class="p-3">Profesor</th>
-                <th class="p-3">Estudiantes</th>   
                 <th class="p-3 text-right">Acciones</th>
               </tr>
             </thead>
@@ -1630,7 +1630,7 @@ async function actualizarTablaSecciones() {
     const secciones = await apiClient.getSecciones();
     seccionesCache = secciones;
     if (secciones.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 italic">No hay secciones registradas.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No hay secciones registradas.</td></tr>`;
       return;
     }
     tbody.innerHTML = secciones.map(sec => {
@@ -1641,11 +1641,6 @@ async function actualizarTablaSecciones() {
           <td class="p-3 text-slate-800 font-semibold font-mono">${sec.codigoAsignatura}</td>
           <td class="p-3 font-bold text-slate-600">${sec.numero}</td>
           <td class="p-3 text-slate-500">${prof}</td>
-          <td class="p-3">
-            <button onclick="abrirModalMatricula('${sec.id}', '${sec.codigoAsignatura} - Sección ${sec.numero}')" class="px-2.5 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-700 text-slate-600 font-semibold text-[10px] rounded-full transition flex items-center gap-1">
-              <span class="material-symbols-outlined text-sm">group</span> Gestionar
-            </button>
-          </td>
           <td class="p-3 text-right whitespace-nowrap">
             <button onclick="editarSeccion('${sec.id}')" class="p-1 text-slate-400 hover:text-emerald-600 rounded transition">
               <span class="material-symbols-outlined text-base">edit</span>
@@ -1662,95 +1657,6 @@ async function actualizarTablaSecciones() {
   }
 }
 
-// ============================================================
-// MODAL: Matricular estudiantes en una sección
-// (accesible desde ENT-09 · Registro de Secciones)
-// ============================================================
-async function abrirModalMatricula(idSeccion, etiquetaSeccion) {
-  document.getElementById('modal-matricula-overlay')?.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'modal-matricula-overlay';
-  overlay.className = 'fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4';
-  overlay.innerHTML = `
-    <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
-      <div class="p-5 border-b border-slate-100 flex items-center justify-between">
-        <div>
-          <h3 class="font-title text-lg font-bold text-slate-800">Estudiantes de la sección</h3>
-          <p class="text-xs text-slate-400">${etiquetaSeccion}</p>
-        </div>
-        <button id="btn-cerrar-modal-matricula" class="p-1 text-slate-400 hover:text-slate-700 rounded transition">
-          <span class="material-symbols-outlined">close</span>
-        </button>
-      </div>
-      <div class="p-5 border-b border-slate-100">
-        <input type="text" id="modal-matricula-buscar" placeholder="Buscar por nombre o matrícula..." class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500">
-      </div>
-      <div id="modal-matricula-lista" class="p-5 overflow-y-auto flex-1 space-y-1 text-sm text-slate-400 italic">
-        Cargando estudiantes...
-      </div>
-      <div class="p-5 border-t border-slate-100 flex gap-2">
-        <button id="btn-guardar-matricula" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Guardar Cambios</button>
-        <button id="btn-cancelar-matricula" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title">Cancelar</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  const cerrar = () => overlay.remove();
-  document.getElementById('btn-cerrar-modal-matricula').addEventListener('click', cerrar);
-  document.getElementById('btn-cancelar-matricula').addEventListener('click', cerrar);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) cerrar(); });
-
-  try {
-    const [todos, matriculados] = await Promise.all([
-      apiClient.getEstudiantes(),
-      apiClient.getEstudiantesDeSeccion(idSeccion)
-    ]);
-    const matriculadosSet = new Set(matriculados.map(e => e.matricula));
-
-    const lista = document.getElementById('modal-matricula-lista');
-    const renderLista = (filtro = '') => {
-      const q = filtro.toLowerCase();
-      const filtrados = todos.filter(e => e.nombre.toLowerCase().includes(q) || e.matricula.toLowerCase().includes(q));
-      if (filtrados.length === 0) {
-        lista.innerHTML = `<p class="text-center text-slate-400 italic py-4">Sin resultados.</p>`;
-        return;
-      }
-      lista.innerHTML = filtrados.map(e => `
-        <label class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-          <input type="checkbox" data-matricula="${e.matricula}" ${matriculadosSet.has(e.matricula) ? 'checked' : ''} class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 chk-matricula">
-          <span class="font-mono text-xs font-bold text-slate-500 w-16 shrink-0">${e.matricula}</span>
-          <span class="text-slate-700 font-semibold">${e.nombre}</span>
-        </label>
-      `).join('');
-    };
-    renderLista();
-
-    lista.addEventListener('change', (e) => {
-      const chk = e.target.closest('.chk-matricula');
-      if (!chk) return;
-      if (chk.checked) matriculadosSet.add(chk.dataset.matricula);
-      else matriculadosSet.delete(chk.dataset.matricula);
-    });
-
-    document.getElementById('modal-matricula-buscar').addEventListener('input', function () {
-      renderLista(this.value.trim());
-    });
-
-    document.getElementById('btn-guardar-matricula').addEventListener('click', async () => {
-      try {
-        await apiClient.matricularEstudiantes(idSeccion, Array.from(matriculadosSet));
-        showToast('Estudiantes de la sección actualizados.', 'success');
-        cerrar();
-      } catch (error) {
-        showToast('Error al guardar matrícula: ' + error.message, 'error');
-      }
-    });
-  } catch (error) {
-    document.getElementById('modal-matricula-lista').innerHTML = `<p class="text-rose-500">Error al cargar estudiantes: ${error.message}</p>`;
-  }
-}
 
 async function eliminarSeccion(id) {
   if (confirm('¿Deseas eliminar esta sección?')) {
@@ -1894,7 +1800,7 @@ async function cargarTablaCalificacionesActa() {
     document.getElementById('ent07-mensaje-vacio').classList.add('hidden');
 
     if (estudiantes.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400 italic">Esta sección todavía no tiene estudiantes matriculados. Ve a ENT-09 · Registro de Secciones y usa "Gestionar" para asignarlos.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400 italic">Esta sección todavía no tiene estudiantes inscritos.</td></tr>`;
       return;
     }
 
@@ -2144,8 +2050,157 @@ async function restaurarConfigUmbrales() {
 }
 
 // ============================================================
-// 11. RPT-01: REPORTE DE PROGRESO ACADÉMICO (BOLETÍN)
+// ENT-11: INSCRIPCIÓN DE MATERIAS (AUTO-SERVICIO ESTUDIANTE)
+// El estudiante elige sus propias secciones; el profesor ya viene
+// asignado desde ENT-09 (Registro de Sección), hecho por el admin.
 // ============================================================
+async function renderENT11() {
+  tituloModulo.textContent = 'ENT-11 · Inscripción de Materias';
+
+  if (currentUser.rol !== 'estudiante') {
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 italic">Este módulo es de autoservicio para estudiantes.</div>`;
+    return;
+  }
+
+  contenedor.innerHTML = `<div class="text-center text-slate-400 italic py-10">Cargando tus datos...</div>`;
+
+  let estudiantes, periodos;
+  try {
+    [estudiantes, periodos] = await Promise.all([
+      apiClient.getEstudiantes(),
+      apiClient.getPeriodos()
+    ]);
+  } catch (error) {
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-rose-100 text-rose-500 text-center">Error al cargar datos: ${error.message}</div>`;
+    return;
+  }
+
+  const yo = estudiantes.find(e => e.correo === currentUser.usuario);
+  if (!yo) {
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 italic">No encontramos tu registro de estudiante asociado a este correo. Contacta a administración.</div>`;
+    return;
+  }
+
+  const periodoActivo = periodos.find(p => p.estado === 'Activo') || periodos[0];
+
+  contenedor.innerHTML = `
+    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-4">
+      <label class="text-xs font-semibold text-slate-500 uppercase shrink-0">Periodo</label>
+      <select id="ent11-periodo" class="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500">
+        ${periodos.map(p => `<option value="${p.periodo}" ${periodoActivo && p.periodo === periodoActivo.periodo ? 'selected' : ''}>${p.periodo}${p.estado === 'Activo' ? ' (Activo)' : ''}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+          <span class="material-symbols-outlined text-emerald-600">school</span> Mis Materias Inscritas
+        </h3>
+        <div id="ent11-mis-materias" class="space-y-2 text-sm text-slate-400 italic">Cargando...</div>
+      </div>
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+          <span class="material-symbols-outlined text-emerald-600">list_alt</span> Secciones Disponibles
+        </h3>
+        <div id="ent11-disponibles" class="space-y-2 text-sm text-slate-400 italic">Cargando...</div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('ent11-periodo').addEventListener('change', () => cargarInscripcion(yo));
+  await cargarInscripcion(yo);
+}
+
+async function cargarInscripcion(yo) {
+  const periodoSel = document.getElementById('ent11-periodo').value;
+  const contMisMaterias = document.getElementById('ent11-mis-materias');
+  const contDisponibles = document.getElementById('ent11-disponibles');
+  contMisMaterias.innerHTML = 'Cargando...';
+  contDisponibles.innerHTML = 'Cargando...';
+
+  try {
+    const [misSecciones, todasLasSecciones] = await Promise.all([
+      apiClient.getSeccionesDeEstudiante(yo.matricula),
+      apiClient.getSecciones()
+    ]);
+
+    const misSeccionesDelPeriodo = misSecciones.filter(s => s.periodo === periodoSel);
+    const idsInscritos = new Set(misSeccionesDelPeriodo.map(s => s.id));
+    const asignaturasInscritas = new Set(misSeccionesDelPeriodo.map(s => s.codigoAsignatura));
+
+    // --- Mis materias inscritas ---
+    if (misSeccionesDelPeriodo.length === 0) {
+      contMisMaterias.innerHTML = `<p class="text-center text-slate-400 italic py-4">Todavía no te has inscrito en ninguna materia este periodo.</p>`;
+    } else {
+      contMisMaterias.innerHTML = misSeccionesDelPeriodo.map(s => `
+        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition">
+          <div>
+            <p class="font-bold text-slate-700 text-sm">${s.codigoAsignatura} · ${s.nombreAsignatura}</p>
+            <p class="text-xs text-slate-400">Sección ${s.numero} · Prof. ${s.nombreProfesor || 'Sin asignar'} · ${s.creditos} CR</p>
+          </div>
+          <button onclick="darseDeBaja(${s.id}, '${yo.matricula}')" class="p-1.5 text-slate-400 hover:text-rose-500 rounded transition shrink-0" title="Darme de baja">
+            <span class="material-symbols-outlined text-base">remove_circle</span>
+          </button>
+        </div>
+      `).join('');
+    }
+
+    // --- Secciones disponibles del periodo seleccionado ---
+    const disponibles = todasLasSecciones.filter(s => s.periodo === periodoSel && s.estado !== 'Inactiva');
+    if (disponibles.length === 0) {
+      contDisponibles.innerHTML = `<p class="text-center text-slate-400 italic py-4">No hay secciones creadas para este periodo todavía.</p>`;
+      return;
+    }
+
+    contDisponibles.innerHTML = disponibles.map(s => {
+      const yaInscritoAqui = idsInscritos.has(s.id);
+      const yaInscritoEnOtraSeccionDeEstaMateria = asignaturasInscritas.has(s.codigoAsignatura) && !yaInscritoAqui;
+      let boton;
+      if (yaInscritoAqui) {
+        boton = `<span class="px-3 py-1.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg">Inscrito</span>`;
+      } else if (yaInscritoEnOtraSeccionDeEstaMateria) {
+        boton = `<span class="px-3 py-1.5 bg-slate-100 text-slate-400 font-semibold text-xs rounded-lg" title="Ya estás inscrito en otra sección de esta materia">No disponible</span>`;
+      } else {
+        boton = `<button onclick="inscribirme(${s.id}, '${yo.matricula}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition">Inscribirme</button>`;
+      }
+      return `
+        <div class="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition">
+          <div>
+            <p class="font-bold text-slate-700 text-sm">${s.codigoAsignatura} · ${s.nombreAsignatura || ''}</p>
+            <p class="text-xs text-slate-400">Sección ${s.numero} · Prof. ${s.nombreProfesor || 'Sin asignar'}</p>
+          </div>
+          ${boton}
+        </div>
+      `;
+    }).join('');
+  } catch (error) {
+    contMisMaterias.innerHTML = `<p class="text-rose-500">Error: ${error.message}</p>`;
+    contDisponibles.innerHTML = '';
+  }
+}
+
+async function inscribirme(idSeccion, matricula) {
+  try {
+    await apiClient.inscribirseEnSeccion(idSeccion, matricula);
+    showToast('¡Inscripción realizada con éxito!', 'success');
+    await cargarInscripcion({ matricula });
+  } catch (error) {
+    showToast('Error al inscribirte: ' + error.message, 'error');
+  }
+}
+
+async function darseDeBaja(idSeccion, matricula) {
+  if (!confirm('¿Deseas darte de baja de esta materia?')) return;
+  try {
+    await apiClient.desmatricularEstudiante(idSeccion, matricula);
+    showToast('Te diste de baja de la materia.', 'success');
+    await cargarInscripcion({ matricula });
+  } catch (error) {
+    showToast('Error al darte de baja: ' + error.message, 'error');
+  }
+}
+
+
 async function renderRPT01() {
   tituloModulo.textContent = 'RPT-01 · Reporte de Progreso Académico';
 
@@ -3247,6 +3302,7 @@ function generarMenuLateral(rol) {
   } else if (rol === 'estudiante') {
     items.push(
       { header: 'Mi Seguimiento' },
+      { id: 'ent11', label: '<span class="material-symbols-outlined text-base">edit_calendar</span> ENT-11 · Inscripción de Materias', action: 'ent11' },
       { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> RPT-01 · Mi Boletín Oficial', action: 'rpt01' },
       { id: 'rpt12', label: '<span class="material-symbols-outlined text-base">donut_large</span> RPT-12 · Mi Pensum', action: 'rpt12' },
       { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> RPT-13 · Mi Índice / Simulador', action: 'rpt13' },
