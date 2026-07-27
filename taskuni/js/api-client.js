@@ -136,10 +136,13 @@ const apiClient = (() => {
 
     /**
      * Obtener todas las asignaturas
+     * @param {Object} [filtros] - { idProfesor } opcional. Si se envía, el backend
+     *  filtra las asignaturas que imparte ese profesor (lo usa el RPT-11 del rol maestro).
      * @returns {Promise<Array>} Lista de asignaturas
      */
-    async function getAsignaturas() {
-        const response = await makeRequest('/asignaturas');
+    async function getAsignaturas(filtros = {}) {
+        const query = new URLSearchParams(filtros).toString();
+        const response = await makeRequest(`/asignaturas${query ? '?' + query : ''}`);
         return response.data;
     }
 

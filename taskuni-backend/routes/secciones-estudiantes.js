@@ -100,6 +100,10 @@ router.get('/:id/estudiantes', async (req, res) => {
 //  - La sección debe existir y estar Activa.
 //  - El estudiante no puede estar ya inscrito en OTRA sección de la misma
 //    asignatura dentro del mismo periodo (evita duplicar la materia).
+//  - La asignatura de la sección debe pertenecer al pensum ACTIVO de la
+//    carrera del estudiante (sin esto un estudiante de contabilidad podía
+//    inscribirse en materias de sistemas). Si la carrera no tiene pensum
+//    activo o la sección no tiene pensum/carrera asociada, se rechaza.
 // ============================================================================
 router.post('/:id/estudiantes/:idEstudiante', async (req, res) => {
     try {
@@ -143,6 +147,57 @@ router.post('/:id/estudiantes/:idEstudiante', async (req, res) => {
             return res.status(409).json({
                 success: false,
                 error: 'Ya estás inscrito en otra sección de esta misma asignatura en este periodo'
+            });
+        }
+
+        // Validación de carrera: la asignatura de la sección debe pertenecer
+        // al pensum activo de la carrera del estudiante.
+        const carreraEstudianteResult = await pool.request()
+            .input('idEstudiante', sql.Int, idEst)
+            .query(`
+                SELECT e.id_carrera, p.id_pensum, p.estado AS estadoPensum
+                FROM Estudiante e
+                LEFT JOIN Pensum p ON p.id_carrera = e.id_carrera AND p.estado = 'Activo'
+                WHERE e.id_estudiante = @idEstudiante
+            `);
+        const carreraEst = carreraEstudianteResult.recordset[0];
+        if (!carreraEst || carreraEst.id_carrera == null) {
+            return res.status(409).json({
+                success: false,
+                error: 'No tienes una carrera asignada. Contacta a administración.'
+            });
+        }
+        if (!carreraEst.id_pensum) {
+            return res.status(409).json({
+                success: false,
+                error: 'Tu carrera no tiene un pensum activo. Contacta a administración.'
+            });
+        }
+
+        // La sección debe tener una asignatura con un pensum cuya carrera
+        // coincida con la del estudiante (y ese pensum debe ser el activo).
+        const pensumSeccionResult = await pool.request()
+            .input('idAsignatura', sql.Int, seccion.id_asignatura)
+            .input('idCarreraEst', sql.Int, carreraEst.id_carrera)
+            .query(`
+                SELECT a.id_pensum, p.id_carrera, p.estado AS estadoPensum
+                FROM Asignatura a
+                INNER JOIN Pensum p ON a.id_pensum = p.id_pensum
+                WHERE a.id_asignatura = @idAsignatura
+            `);
+        const pensumSeccion = pensumSeccionResult.recordset[0];
+        const carreraDeLaAsignatura = pensumSeccion ? pensumSeccion.id_carrera : null;
+
+        if (!pensumSeccion) {
+            return res.status(409).json({
+                success: false,
+                error: 'Esta sección no tiene una asignatura con pensum asociado. Contacta a administración.'
+            });
+        }
+        if (carreraDeLaAsignatura !== carreraEst.id_carrera || pensumSeccion.estadoPensum !== 'Activo') {
+            return res.status(409).json({
+                success: false,
+                error: 'Esta materia no pertenece al plan de estudios de tu carrera.'
             });
         }
 

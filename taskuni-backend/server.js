@@ -87,6 +87,7 @@ app.use('/api/facultades', facultadesRouter);
 app.use('/api/secciones', seccionesEstudiantesRouter);
 app.use('/api/carreras', carrerasRouter); // NUEVO
 // ============================================================================
+// ============================================================================
 // ENDPOINTS DE AUTENTICACIÓN
 // ============================================================================
 
@@ -389,19 +390,49 @@ app.delete('/api/estudiantes/matricula/:matricula', async (req, res) => {
 
 app.get('/api/asignaturas', async (req, res) => {
     try {
-        const result = await pool.request().query(`
-            SELECT 
+        // Filtro opcional: ?idProfesor=X (o ?idProfesor=codigo) restringe a las
+        // asignaturas que ese profesor imparte. Lo usa el RPT-11 del rol maestro
+        // para que solo vea las materias a su cargo.
+        const { idProfesor } = req.query;
+        let whereProfesor = '';
+        const reqAsig = pool.request();
+        if (idProfesor !== undefined && idProfesor !== null && idProfesor !== '') {
+            // Resolver id_profesor (acepta id numérico o código_profesor).
+            let idProf = null;
+            if (!isNaN(idProfesor)) {
+                idProf = Number(idProfesor);
+            } else {
+                const profResult = await pool.request()
+                    .input('codigo', mssql.VarChar(20), idProfesor)
+                    .query('SELECT id_profesor FROM Profesor WHERE codigo_profesor = @codigo');
+                if (profResult.recordset.length > 0) {
+                    idProf = profResult.recordset[0].id_profesor;
+                }
+            }
+            if (idProf !== null) {
+                reqAsig.input('idProf', mssql.Int, idProf);
+                whereProfesor = 'WHERE a.id_profesor = @idProf';
+            }
+        }
+
+        const result = await reqAsig.query(`
+            SELECT
                 a.id_asignatura,
                 a.codigo_asignatura AS codigo,
                 a.nombre_asignatura AS nombre,
                 a.creditos,
                 a.id_pensum,
+                a.id_profesor,
+                pr.codigo_profesor AS profesorCodigo,
+                pr.nombre AS profesorNombre,
                 c.id_carrera,
                 c.nombre_carrera AS carreraNombre,
                 a.estado
             FROM Asignatura a
             LEFT JOIN Pensum p ON a.id_pensum = p.id_pensum
             LEFT JOIN Carrera c ON p.id_carrera = c.id_carrera
+            LEFT JOIN Profesor pr ON a.id_profesor = pr.id_profesor
+            ${whereProfesor}
             ORDER BY a.nombre_asignatura
         `);
         res.json({ success: true, data: result.recordset });
@@ -727,13 +758,20 @@ app.delete('/api/profesores/:codigo', async (req, res) => {
 
 app.get('/api/secciones', async (req, res) => {
     try {
+        // Se unen Pensum y Carrera a través de la asignatura para que el frontend
+        // pueda filtrar las secciones por carrera del estudiante (sin esto un
+        // estudiante de contabilidad vería secciones de sistemas, etc.).
         const result = await pool.request().query(`
-            SELECT 
+            SELECT
                 s.id_seccion AS id,
                 s.numero_seccion AS numero,
                 s.id_asignatura,
                 a.codigo_asignatura AS codigoAsignatura,
                 a.nombre_asignatura AS nombreAsignatura,
+                a.id_pensum,
+                p.id_carrera AS idCarrera,
+                c.codigo_carrera AS codigoCarrera,
+                c.nombre_carrera AS nombreCarrera,
                 s.id_profesor,
                 pr.codigo_profesor AS codigoProfesor,
                 pr.nombre AS nombreProfesor,
@@ -742,6 +780,8 @@ app.get('/api/secciones', async (req, res) => {
                 s.estado
             FROM Seccion s
             LEFT JOIN Asignatura a ON s.id_asignatura = a.id_asignatura
+            LEFT JOIN Pensum p ON a.id_pensum = p.id_pensum
+            LEFT JOIN Carrera c ON p.id_carrera = c.id_carrera
             LEFT JOIN Profesor pr ON s.id_profesor = pr.id_profesor
             LEFT JOIN Periodo per ON s.id_periodo = per.id_periodo
             ORDER BY per.periodo, a.codigo_asignatura, s.numero_seccion

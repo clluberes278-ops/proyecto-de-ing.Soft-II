@@ -2200,10 +2200,21 @@ async function cargarInscripcion(yo) {
   contDisponibles.innerHTML = 'Cargando...';
 
   try {
-    const [misSecciones, todasLasSecciones] = await Promise.all([
+    const [misSecciones, todasLasSecciones, pensumData] = await Promise.all([
       apiClient.getSeccionesDeEstudiante(yo.matricula),
-      apiClient.getSecciones()
+      apiClient.getSecciones(),
+      // Necesitamos la carrera del estudiante para mostrar solo secciones
+      // que pertenezcan a su plan de estudios (de lo contrario un estudiante
+      // de contabilidad vería materias de sistemas).
+      apiClient.getPensumPorEstudiante(yo.matricula)
     ]);
+    // El endpoint /estudiantes/:idOrMatricula/pensum devuelve la estructura
+    // anidada { estudiante: { carrera: { id, ... } }, asignaturas: [...] }.
+    // Soportamos ambas formas por si cambia la forma en el futuro.
+    const carreraEstudiante =
+      pensumData?.estudiante?.carrera?.id ??
+      pensumData?.carrera?.id ??
+      null;
 
     const misSeccionesDelPeriodo = misSecciones.filter(s => s.periodo === periodoSel);
     const idsInscritos = new Set(misSeccionesDelPeriodo.map(s => s.id));
@@ -2227,9 +2238,43 @@ async function cargarInscripcion(yo) {
     }
 
     // --- Secciones disponibles del periodo seleccionado ---
-    const disponibles = todasLasSecciones.filter(s => s.periodo === periodoSel && s.estado !== 'Inactiva');
-    if (disponibles.length === 0) {
+    // Filtramos por carrera del estudiante: si la sección no tiene id_carrera
+    // (caso común: asignaturas creadas antes de que se setee id_pensum) las
+    // mostramos con una advertencia para que el admin sepa que debe corregirlas.
+    const seccionesDelPeriodo = todasLasSecciones.filter(s =>
+      s.periodo === periodoSel && s.estado !== 'Inactiva'
+    );
+
+    if (!carreraEstudiante) {
+      console.warn('[ENT-11] No se pudo determinar la carrera del estudiante. Respuesta del pensum:', pensumData);
+      contDisponibles.innerHTML = `<p class="text-center text-amber-600 italic py-4">No se pudo determinar tu carrera. Contacta a administración.</p>`;
+      return;
+    }
+    if (seccionesDelPeriodo.length === 0) {
       contDisponibles.innerHTML = `<p class="text-center text-slate-400 italic py-4">No hay secciones creadas para este periodo todavía.</p>`;
+      return;
+    }
+
+    // Diagnóstico: avisar cuando las secciones existen pero las asignaturas
+    // no tienen pensum/carrera asociados (dato que viene como null/undefined
+    // desde el JOIN). Esto casi siempre significa que las asignaturas se
+    // crearon antes de que se seteara id_pensum correctamente.
+    const seccionesSinCarrera = seccionesDelPeriodo.filter(s => s.idCarrera == null);
+
+    const disponibles = seccionesDelPeriodo.filter(s => s.idCarrera === carreraEstudiante);
+
+    if (disponibles.length === 0) {
+      if (seccionesSinCarrera.length > 0) {
+        // Listamos los nombres de las asignaturas huérfanas para que se entienda
+        // exactamente cuáles son y se pueda pedir al admin que las corrija.
+        const nombresHuerfanas = seccionesSinCarrera.map(s =>
+          `${s.codigoAsignatura || 'sin-código'} · ${s.nombreAsignatura || 'sin nombre'}`
+        ).join(', ');
+        console.warn('[ENT-11] Sin secciones para carrera', carreraEstudiante, '. Periodo:', periodoSel, '. Total secciones del periodo:', seccionesDelPeriodo.length, '. Sin idCarrera:', seccionesSinCarrera.length, seccionesSinCarrera);
+        contDisponibles.innerHTML = `<p class="text-center text-amber-600 italic py-4 text-xs">Las secciones abiertas este periodo (${nombresHuerfanas}) no pertenecen al plan de estudios de tu carrera. Pide a administración que revise ENT-02 (Asignaturas) y les asigne el pensum correcto.</p>`;
+        return;
+      }
+      contDisponibles.innerHTML = `<p class="text-center text-slate-400 italic py-4">No hay secciones disponibles para tu carrera en este periodo todavía.</p>`;
       return;
     }
 
@@ -2255,6 +2300,7 @@ async function cargarInscripcion(yo) {
       `;
     }).join('');
   } catch (error) {
+    console.error('[ENT-11] Error cargando inscripción:', error);
     contMisMaterias.innerHTML = `<p class="text-rose-500">Error: ${error.message}</p>`;
     contDisponibles.innerHTML = '';
   }
@@ -2284,6 +2330,19 @@ async function darseDeBaja(idSeccion, matricula) {
 
 async function renderRPT01() {
   tituloModulo.textContent = 'RPT-01 · Reporte de Progreso Académico';
+
+  // El maestro no tiene acceso al boletín del estudiante: ya no aparece en su menú,
+  // pero si alguien llega a esta vista por URL se bloquea aquí también.
+  if (currentUser.rol === 'maestro') {
+    contenedor.innerHTML = `
+      <div class="bg-white p-10 rounded-2xl border border-slate-100 shadow-sm text-center">
+        <span class="material-symbols-outlined text-5xl text-slate-300 block mb-3">lock</span>
+        <h3 class="font-title text-lg font-bold text-slate-700">Acceso restringido</h3>
+        <p class="text-slate-400 text-sm mt-2 max-w-md mx-auto">El Boletín Oficial de Calificaciones no está disponible para cuentas de maestro. Esta vista es exclusiva de administradores y del propio estudiante.</p>
+      </div>
+    `;
+    return;
+  }
 
   const estudiantes = await apiClient.getEstudiantes();
   let menuSeleccion = '';
@@ -2779,13 +2838,24 @@ function renderRPT06() {
 
 // ============================================================
 // 17. RPT-11: LISTADO GENERAL DE ASIGNATURAS
+// Para el rol maestro se filtran solo las materias a su cargo y se ocultan
+// la columna "Profesor" y los contadores globales (siempre sería él mismo).
 // ============================================================
 async function renderRPT11() {
-  tituloModulo.textContent = 'RPT-11 · Listado General de Asignaturas';
+  const esMaestro = currentUser.rol === 'maestro';
+  tituloModulo.textContent = esMaestro
+    ? 'RPT-11 · Mis Materias'
+    : 'RPT-11 · Listado General de Asignaturas';
 
   try {
+    // Para el maestro pedimos sus asignaturas filtradas al backend;
+    // para admin/estudiante (que ya no entra a esta vista) se mantiene igual.
+    const filtrosAsig = esMaestro && currentUser.idReferencia
+      ? { idProfesor: currentUser.idReferencia }
+      : {};
+
     const [asignaturas, profesores] = await Promise.all([
-      apiClient.getAsignaturas(),
+      apiClient.getAsignaturas(filtrosAsig),
       apiClient.getProfesores()
     ]);
 
@@ -2793,15 +2863,22 @@ async function renderRPT11() {
     const activas = asignaturas.filter(a => a.estado === 'Activa').length;
     const inactivas = totalAsig - activas;
 
-    contenedor.innerHTML = `
-      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
+    const contadoresHTML = esMaestro ? '' : `
         <div class="grid grid-cols-3 gap-4 p-4 bg-slate-50 border rounded-2xl text-xs font-semibold text-slate-500 text-center font-title">
           <div>Total Asignaturas: <strong class="text-slate-800 text-sm block font-mono">${totalAsig}</strong></div>
           <div>Activas: <strong class="text-emerald-600 text-sm block font-mono">${activas}</strong></div>
           <div>Inactivas: <strong class="text-slate-400 text-sm block font-mono">${inactivas}</strong></div>
-        </div>
+        </div>`;
+
+    // El maestro no necesita ver "Profesor": el backend ya le devolvió solo
+    // las suyas, y la columna no aporta información nueva.
+    const columnaProfesorHeader = esMaestro ? '' : '<th class="p-3">Profesor</th>';
+
+    contenedor.innerHTML = `
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
+        ${contadoresHTML}
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-100">
-          <h3 class="font-title text-md font-bold text-slate-800">Listado General</h3>
+          <h3 class="font-title text-md font-bold text-slate-800">${esMaestro ? 'Asignaturas a mi cargo' : 'Listado General'}</h3>
           <div class="flex flex-wrap gap-2 w-full sm:w-auto">
             <button onclick="filtrarAsignaturasPrompt()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow transition font-title">[ FILTRAR ]</button>
             <button onclick="window.print()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow transition font-title">[ EXPORTAR PDF ]</button>
@@ -2816,7 +2893,7 @@ async function renderRPT11() {
                 <th class="p-3">Nombre Asignatura</th>
                 <th class="p-3 text-center">Créditos</th>
                 <th class="p-3">Estado</th>
-                <th class="p-3">Profesor</th>
+                ${columnaProfesorHeader}
               </tr>
             </thead>
             <tbody id="tbl-rpt11"></tbody>
@@ -2825,32 +2902,38 @@ async function renderRPT11() {
       </div>
     `;
 
-    actualizarTablaRPT11(asignaturas, profesores);
+    actualizarTablaRPT11(asignaturas, profesores, esMaestro);
   } catch (error) {
     showToast('Error al cargar asignaturas: ' + error.message, 'error');
   }
 }
 
-function actualizarTablaRPT11(asignaturas, profesores, filtro = '') {
+function actualizarTablaRPT11(asignaturas, profesores, esMaestro = false, filtro = '') {
   const tbody = document.getElementById('tbl-rpt11');
   if (!tbody) return;
   const filtradas = asignaturas.filter(a => {
     const q = filtro.toLowerCase();
     return a.codigo.toLowerCase().includes(q) || a.nombre.toLowerCase().includes(q);
   });
+  const colspan = esMaestro ? 4 : 5;
   if (filtradas.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No se encontraron asignaturas.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${colspan}" class="p-6 text-center text-slate-400 italic">${esMaestro ? 'No tienes asignaturas asignadas actualmente.' : 'No se encontraron asignaturas.'}</td></tr>`;
     return;
   }
   tbody.innerHTML = filtradas.map(a => {
-    const prof = profesores.find(p => p.codigo === a.profesor)?.nombre || 'Sin asignar';
+    // El backend ya trae profesorNombre/profesorCodigo cuando hay JOIN; caemos
+    // al lookup antiguo por compatibilidad con respuestas sin esos campos.
+    const prof = a.profesorNombre
+      || profesores.find(p => p.codigo === (a.profesor || a.profesorCodigo))?.nombre
+      || 'Sin asignar';
+    const columnaProfesor = esMaestro ? '' : `<td class="p-3 text-slate-500 font-medium">${prof}</td>`;
     return `
       <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
         <td class="p-3 font-mono font-bold text-slate-700">${a.codigo}</td>
         <td class="p-3 text-slate-800 font-bold">${a.nombre}</td>
         <td class="p-3 text-center font-bold text-slate-500 font-mono">${a.creditos}</td>
         <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${a.estado === 'Activa' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'} font-title">${a.estado}</span></td>
-        <td class="p-3 text-slate-500 font-medium">${prof}</td>
+        ${columnaProfesor}
       </tr>
     `;
   }).join('');
@@ -3294,10 +3377,11 @@ function generarMenuLateral(rol) {
       { header: 'Operaciones' },
       { id: 'ent06', label: '<span class="material-symbols-outlined text-base">filter_alt</span> ENT-06 · Filtro Reportes', action: 'ent06' },
       { id: 'ent07', label: '<span class="material-symbols-outlined text-base">grade</span> ENT-07 · Carga de Notas', action: 'ent07' },
-      { header: 'Reportes' },
-      { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> RPT-11 · Catálogo Materias', action: 'rpt11' },
+      { header: 'Mis materias y reportes' },
+      // RPT-01 (Boletín Oficial) removido: un maestro no necesita ver el
+      // expediente del estudiante (carrera, índice acumulado, etc.).
+      { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> RPT-11 · Mis Materias', action: 'rpt11' },
       { id: 'rpt04', label: '<span class="material-symbols-outlined text-base">warning</span> RPT-04 · Alertas de Riesgo', action: 'rpt04' },
-      { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> RPT-01 · Boletín Oficial', action: 'rpt01' },
       { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Correos', action: 'rpt07' },
       { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Tabla Conversión', action: 'rpt06' }
     );
