@@ -2333,9 +2333,9 @@ async function renderRPT05() {
         <div class="flex gap-2 w-full md:w-auto">
           <select id="rpt05-filter-color" class="px-3 py-1.5 border rounded-lg text-xs font-title font-bold focus:ring-1 focus:ring-emerald-500">
             <option value="">Todos los Estados</option>
-            <option value="verde">🟢 Verde (>= 3.2)</option>
-            <option value="amarillo">🟡 Amarillo (2.5 - 3.2)</option>
-            <option value="rojo">🔴 Rojo (< 2.5)</option>
+            <option value="verde">Verde (>= 3.2)</option>
+            <option value="amarillo">Amarillo (2.5 - 3.2)</option>
+            <option value="rojo">Rojo (< 2.5)</option>
           </select>
           <input type="text" id="rpt05-search" placeholder="Buscar alumno..." class="px-3 py-1.5 border rounded-lg text-xs w-full sm:w-56">
         </div>
@@ -2391,24 +2391,24 @@ async function actualizarGridSemaforo() {
       const tieneNotas = notasEst.length > 0;
 
       let colorBadge = 'bg-slate-100 text-slate-500 border-slate-200';
-      let semIcon = '⚪';
+      let semIcon = 'O';
       let semText = 'Sin Notas';
       let progBarColor = 'bg-slate-300';
 
       if (tieneNotas) {
         if (ind >= config.verde) {
           colorBadge = 'bg-emerald-50 text-emerald-700 border-emerald-200';
-          semIcon = '🟢';
+          semIcon = 'V';
           semText = 'Verde (Alto)';
           progBarColor = 'bg-emerald-500';
         } else if (ind >= config.amarillo) {
           colorBadge = 'bg-amber-50 text-amber-700 border-amber-200';
-          semIcon = '🟡';
+          semIcon = 'A';
           semText = 'Amarillo (Alerta)';
           progBarColor = 'bg-amber-500';
         } else {
           colorBadge = 'bg-rose-50 text-rose-700 border-rose-200';
-          semIcon = '🔴';
+          semIcon = 'R';
           semText = 'Rojo (Riesgo)';
           progBarColor = 'bg-rose-500';
         }

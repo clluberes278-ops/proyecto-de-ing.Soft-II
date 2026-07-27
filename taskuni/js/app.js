@@ -57,7 +57,7 @@ function renderView(view) {
             <div class="mb-4">
                 <button onclick="renderView('form')" 
                         class="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700">
-                    ➕ Nuevo Estudiante
+                    Nuevo Estudiante
                 </button>
             </div>
             <div id="tabla-container" class="bg-white rounded-lg shadow">
@@ -91,7 +91,7 @@ async function cargarCarrerasEnForm() {
         });
     } catch (error) {
         console.error('Error cargando carreras:', error);
-        alert('⚠️ Error al cargar las carreras: ' + error.message);
+        alert('Error al cargar las carreras: ' + error.message);
     }
 }
 
@@ -109,7 +109,7 @@ async function guardarEstudiante(e) {
 
     // Validaciones
     if (!matricula || !nombre || !id_carrera) {
-        alert('⚠️ Por favor completa todos los campos requeridos');
+        alert('Por favor completa todos los campos requeridos');
         return;
     }
 
@@ -130,7 +130,7 @@ async function guardarEstudiante(e) {
         });
 
         // Mostrar éxito
-        alert('✅ ¡Estudiante guardado exitosamente!');
+        alert('Estudiante guardado exitosamente!');
 
         // Limpiar form
         e.target.reset();
@@ -140,13 +140,13 @@ async function guardarEstudiante(e) {
 
     } catch (error) {
         console.error('Error guardando estudiante:', error);
-        alert('❌ Error: ' + error.message);
+        alert('Error: ' + error.message);
 
     } finally {
         // Restaurar botón
         const btn = e.target.querySelector('button[type="submit"]');
         if (btn) {
-            btn.textContent = '💾 Guardar Registro';
+            btn.textContent = 'Guardar Registro';
             btn.disabled = false;
         }
     }
@@ -187,9 +187,9 @@ async function cargarEstudiantesEnTabla() {
                             <td class="p-3 text-sm">${est.correo || '-'}</td>
                             <td class="p-3">
                                 <button onclick="editarEstudiante(${est.id_estudiante})" 
-                                        class="text-blue-600 hover:underline mr-2">✏️ Editar</button>
+                                        class="text-blue-600 hover:underline mr-2">Editar</button>
                                 <button onclick="confirmarEliminar(${est.id_estudiante}, '${est.nombre}')" 
-                                        class="text-red-600 hover:underline">🗑️ Eliminar</button>
+                                        class="text-red-600 hover:underline">Eliminar</button>
                             </td>
                         </tr>
                     `).join('')}
@@ -201,7 +201,7 @@ async function cargarEstudiantesEnTabla() {
         const container = document.getElementById('tabla-container');
         container.innerHTML = `
             <p class="p-4 text-center text-red-600">
-                ❌ Error al cargar estudiantes: ${error.message}
+                Error al cargar estudiantes: ${error.message}
             </p>
         `;
     }
@@ -219,12 +219,12 @@ async function editarEstudiante(id) {
                 estado: estudiante.estado
             });
 
-            alert('✅ Estudiante actualizado');
+            alert('Estudiante actualizado');
             cargarEstudiantesEnTabla();
         }
     } catch (error) {
         console.error('Error editando:', error);
-        alert('❌ Error: ' + error.message);
+        alert('Error: ' + error.message);
     }
 }
 
@@ -232,11 +232,11 @@ async function confirmarEliminar(id, nombre) {
     if (confirm(`¿Estás seguro de que quieres eliminar a ${nombre}?`)) {
         try {
             await apiClient.eliminarEstudiante(id);
-            alert('✅ Estudiante eliminado');
+            alert('Estudiante eliminado');
             cargarEstudiantesEnTabla();
         } catch (error) {
             console.error('Error eliminando:', error);
-            alert('❌ Error: ' + error.message);
+            alert('Error: ' + error.message);
         }
     }
 }
@@ -249,10 +249,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Verificar conexión con el servidor
     try {
         const health = await apiClient.health();
-        console.log('✅ Servidor conectado:', health);
+        console.log('[OK] Servidor conectado:', health);
     } catch (error) {
-        console.error('❌ No hay conexión con el servidor:', error);
-        alert('⚠️ No se puede conectar con el servidor. Verifica que esté corriendo: npm run dev');
+        console.error('[ERROR] No hay conexión con el servidor:', error);
+        alert('No se puede conectar con el servidor. Verifica que esté corriendo: npm run dev');
     }
 
     // Renderizar vista inicial

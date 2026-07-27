@@ -133,15 +133,18 @@ router.post('/', async (req, res) => {
             const idEstudiante = await resolverIdEstudiante(pool, nota.idEstudiante);
             const idAsignatura = await resolverIdAsignatura(pool, nota.idAsignatura);
 
-            let idSeccion = !isNaN(nota.idSeccion) ? Number(nota.idSeccion) : null;
-            if (!idSeccion) {
-                const secResult = await pool.request()
-                    .input('idAsignatura', sql.Int, idAsignatura)
-                    .query('SELECT TOP 1 id_seccion FROM Seccion WHERE id_asignatura = @idAsignatura ORDER BY id_seccion');
-                if (secResult.recordset.length === 0) {
-                    throw new Error(`No hay ninguna sección creada para la asignatura ${nota.idAsignatura}`);
+            let idSeccion = null;
+            if (nota.idSeccion !== undefined && nota.idSeccion !== null && nota.idSeccion !== '') {
+                const n = Number(nota.idSeccion);
+                if (Number.isFinite(n) && n > 0) {
+                    idSeccion = n;
                 }
-                idSeccion = secResult.recordset[0].id_seccion;
+            }
+            if (!idSeccion) {
+                return res.status(400).json({
+                    success: false,
+                    error: `idSeccion es requerido y debe ser un entero positivo (recibido: ${JSON.stringify(nota.idSeccion)})`
+                });
             }
 
             const request = pool.request()

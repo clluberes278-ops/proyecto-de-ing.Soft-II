@@ -30,7 +30,7 @@ async function seed() {
             VALUES (@correo, @hash, 'admin', 'Activo')
         `);
 
-    console.log('✅ Cuenta admin creada:');
+    console.log('[OK] Cuenta admin creada:');
     console.log('   Correo:', CORREO_ADMIN);
     console.log('   Password:', PASSWORD_ADMIN);
     console.log('   Cámbiala después de entrar por primera vez.');

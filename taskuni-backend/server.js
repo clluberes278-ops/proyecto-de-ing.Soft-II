@@ -70,9 +70,9 @@ async function initializeDatabase() {
     try {
         pool = new mssql.ConnectionPool(config);
         await pool.connect();
-        console.log('✅ Conectado a SQL Server (UniversidadDB)');
+        console.log('[OK] Conectado a SQL Server (UniversidadDB)');
     } catch (error) {
-        console.error('❌ Error conectando a SQL Server:', error);
+        console.error('[ERROR] Error conectando a SQL Server:', error);
         process.exit(1);
     }
 }
@@ -262,8 +262,8 @@ app.post('/api/estudiantes', async (req, res) => {
             }
         }
 
-        // Convertir id_carrera (que puede ser código) a id numérico
-        let carreraId = id_carrera;
+        // Convertir id_carrera (que puede ser código o id numérico) y validar que exista
+        let carreraId;
         if (isNaN(id_carrera)) {
             const carreraResult = await pool.request()
                 .input('codigo', mssql.VarChar(20), id_carrera)
@@ -272,6 +272,14 @@ app.post('/api/estudiantes', async (req, res) => {
                 return res.status(400).json({ success: false, error: 'Carrera no encontrada' });
             }
             carreraId = carreraResult.recordset[0].id_carrera;
+        } else {
+            const carreraExist = await pool.request()
+                .input('idCarrera', mssql.Int, Number(id_carrera))
+                .query('SELECT 1 AS existe FROM Carrera WHERE id_carrera = @idCarrera');
+            if (carreraExist.recordset.length === 0) {
+                return res.status(400).json({ success: false, error: `Carrera con id ${id_carrera} no existe` });
+            }
+            carreraId = Number(id_carrera);
         }
 
         // ==== Transacción: Estudiante + (opcional) Usuario ====
@@ -924,8 +932,24 @@ app.post('/api/notificaciones', async (req, res) => {
         }
         for (const n of notificaciones) {
             const { id_estudiante, asunto, mensaje, fecha_envio, estado } = n;
+            if (!id_estudiante) {
+                return res.status(400).json({ success: false, error: 'Cada notificación requiere id_estudiante' });
+            }
+            // Resolver matrícula o id numérico al id_estudiante real (la columna es INT).
+            let idEst;
+            if (!isNaN(id_estudiante)) {
+                idEst = Number(id_estudiante);
+            } else {
+                const r = await pool.request()
+                    .input('matricula', mssql.VarChar(20), id_estudiante)
+                    .query('SELECT id_estudiante FROM Estudiante WHERE matricula = @matricula');
+                if (r.recordset.length === 0) {
+                    return res.status(404).json({ success: false, error: `Estudiante no encontrado: ${id_estudiante}` });
+                }
+                idEst = r.recordset[0].id_estudiante;
+            }
             await pool.request()
-                .input('id_estudiante', mssql.VarChar(20), id_estudiante)
+                .input('id_estudiante', mssql.Int, idEst)
                 .input('asunto', mssql.VarChar(200), asunto)
                 .input('mensaje', mssql.VarChar(500), mensaje)
                 .input('fecha_envio', mssql.Date, fecha_envio || new Date())
@@ -964,7 +988,7 @@ app.get('/api/logs', async (req, res) => {
         // La tabla Log no existe en el script de BD actual.
         // Si quieres persistir logs en la BD, crea la tabla Log y este catch dejará de dispararse.
         // Mientras tanto, no rompemos el dashboard: devolvemos vacío (el frontend ya usa localStorage como respaldo).
-        console.warn('⚠️  Tabla Log no encontrada, devolviendo lista vacía:', error.message);
+        console.warn('[WARN] Tabla Log no encontrada, devolviendo lista vacía:', error.message);
         res.json({ success: true, data: [] });
     }
 });
@@ -989,7 +1013,7 @@ app.post('/api/logs', async (req, res) => {
         res.status(201).json({ success: true, message: 'Log registrado' });
     } catch (error) {
         // Igual que en el GET: si la tabla Log no existe todavía, no tumbamos la petición.
-        console.warn('⚠️  No se pudo guardar el log en BD (¿existe la tabla Log?):', error.message);
+        console.warn('[WARN] No se pudo guardar el log en BD (existe la tabla Log?):', error.message);
         res.status(200).json({ success: true, message: 'Log no persistido (tabla Log no existe aún)' });
     }
 });
@@ -1057,36 +1081,36 @@ async function start() {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔════════════════════════════════════════════════════════╗');
-        console.log('║         🚀 taskUni Backend - Servidor Iniciado        ║');
+        console.log('║         taskUni Backend - Servidor Iniciado           ║');
         console.log('╚════════════════════════════════════════════════════════╝');
         console.log('');
-        console.log(`📍 Servidor: http://localhost:${PORT}`);
-        console.log(`🗄️  Base de datos: ${process.env.DB_DATABASE}`);
-        console.log(`🖥️  Servidor SQL: ${process.env.DB_SERVER}`);
+        console.log(`Servidor: http://localhost:${PORT}`);
+        console.log(`Base de datos: ${process.env.DB_DATABASE}`);
+        console.log(`Servidor SQL: ${process.env.DB_SERVER}`);
         console.log('');
         console.log('Endpoints disponibles:');
-        console.log('  ✅ GET  /api/health');
-        console.log('  ✅ GET  /api/db-status');
-        console.log('  ✅ GET  /api/estudiantes');
-        console.log('  ✅ POST /api/estudiantes');
-        console.log('  ✅ DELETE /api/estudiantes/matricula/:matricula');
-        console.log('  ✅ GET  /api/asignaturas');
-        console.log('  ✅ POST /api/asignaturas');
-        console.log('  ✅ GET  /api/carreras');
-        console.log('  ✅ GET  /api/profesores');
-        console.log('  ✅ GET  /api/periodos');
-        console.log('  ✅ POST /api/periodos');
-        console.log('  ✅ GET  /api/secciones');
-        console.log('  ✅ POST /api/secciones');
-        console.log('  ✅ GET  /api/notas');
-        console.log('  ✅ POST /api/notas');
-        console.log('  ✅ GET  /api/configuracion');
-        console.log('  ✅ PUT  /api/configuracion');
-        console.log('  ✅ GET  /api/notificaciones');
-        console.log('  ✅ POST /api/notificaciones');
-        console.log('  ✅ GET  /api/logs');
-        console.log('  ✅ POST /api/logs');
-        console.log('  ✅ GET  /api/pensum/:idCarrera');
+        console.log('  [GET]    /api/health');
+        console.log('  [GET]    /api/db-status');
+        console.log('  [GET]    /api/estudiantes');
+        console.log('  [POST]   /api/estudiantes');
+        console.log('  [DELETE] /api/estudiantes/matricula/:matricula');
+        console.log('  [GET]    /api/asignaturas');
+        console.log('  [POST]   /api/asignaturas');
+        console.log('  [GET]    /api/carreras');
+        console.log('  [GET]    /api/profesores');
+        console.log('  [GET]    /api/periodos');
+        console.log('  [POST]   /api/periodos');
+        console.log('  [GET]    /api/secciones');
+        console.log('  [POST]   /api/secciones');
+        console.log('  [GET]    /api/notas');
+        console.log('  [POST]   /api/notas');
+        console.log('  [GET]    /api/configuracion');
+        console.log('  [PUT]    /api/configuracion');
+        console.log('  [GET]    /api/notificaciones');
+        console.log('  [POST]   /api/notificaciones');
+        console.log('  [GET]    /api/logs');
+        console.log('  [POST]   /api/logs');
+        console.log('  [GET]    /api/pensum/:idCarrera');
         console.log('');
     });
 }

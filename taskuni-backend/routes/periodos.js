@@ -9,7 +9,7 @@ router.get('/', async (req, res) => {
     try {
         const pool = await getConnection();
 
-        // ✅ CORRECTO - usar nombres reales de columnas (snake_case)
+        // CORRECTO - usar nombres reales de columnas (snake_case)
         const query = `
             SELECT
                 id_periodo,
@@ -18,12 +18,12 @@ router.get('/', async (req, res) => {
                 fecha_fin,
                 estado
             FROM Periodo
-            ORDER BY fecha_inicio DESC
+            ORDER BY CASE WHEN estado = 'Activo' THEN 0 ELSE 1 END, fecha_inicio DESC
         `;
 
         const result = await pool.request().query(query);
 
-        // ✅ Transformar a camelCase para el frontend
+        // Transformar a camelCase para el frontend
         const periodos = result.recordset.map(p => ({
             id_periodo: p.id_periodo,
             periodo: p.periodo,

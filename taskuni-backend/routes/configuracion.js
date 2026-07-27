@@ -9,7 +9,7 @@ router.get('/', async (req, res) => {
     try {
         const pool = await getConnection();
 
-        // ✅ CORRECTO - la tabla real se llama ConfiguracionUmbral, no Configuracion
+        // CORRECTO - la tabla real se llama ConfiguracionUmbral, no Configuracion
         const query = `
             SELECT
                 id_configuracion,

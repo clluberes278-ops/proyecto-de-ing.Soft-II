@@ -196,7 +196,6 @@ async function renderView(viewName) {
     case 'rpt05': await renderRPT05(); break;
     case 'rpt06': await renderRPT06(); break;
     case 'rpt07': await renderRPT07(); break;
-    case 'rpt08': await renderRPT08(); break;
     case 'rpt11': await renderRPT11(); break;
     case 'rpt12': await renderRPT12(); break;
     case 'rpt13': await renderRPT13(); break;
@@ -219,11 +218,12 @@ async function renderInicio() {
       apiClient.getNotas()
     ]);
 
-    const totalEstudiantes = estudiantes.length;
+    const totalEstudiantes = estudiantes.filter(e => e.estado === 'Activo').length;
     const totalAsignaturas = asignaturas.length;
 
     let sumIndices = 0, totalConIndice = 0, estudiantesEnRojo = 0;
     estudiantes.forEach(est => {
+      if (est.estado !== 'Activo') return;
       const ind = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
       if (notas.some(n => n.matriculaEstudiante === est.matricula)) {
         sumIndices += ind;
@@ -1335,6 +1335,11 @@ async function renderENT06() {
   const periodos = await apiClient.getPeriodos();
   const asignaturas = await apiClient.getAsignaturas();
   const estudiantes = await apiClient.getEstudiantes();
+  const secciones = await apiClient.getSecciones();
+
+  // Secciones filtrables segun el periodo seleccionado; empieza con todas
+  // para que el select no quede vacio antes de elegir periodo.
+  const periodoActivo = (periodos.find(p => p.estado === 'Activo') || {}).periodo || '';
 
   contenedor.innerHTML = `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1347,7 +1352,7 @@ async function renderENT06() {
             <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Período (Obligatorio)</label>
             <select id="ent06-periodo" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
               <option value="">Seleccione Período</option>
-              ${periodos.map(p => `<option value="${p.periodo}" ${activeFilter.periodo === p.periodo ? 'selected' : ''}>${p.periodo}</option>`).join('')}
+              ${periodos.map(p => `<option value="${p.periodo}" ${activeFilter.periodo === p.periodo ? 'selected' : ''} data-id="${p.id_periodo || ''}">${p.periodo}</option>`).join('')}
             </select>
           </div>
           <div>
@@ -1361,16 +1366,14 @@ async function renderENT06() {
             <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Sección (Obligatorio)</label>
             <select id="ent06-seccion" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500" required>
               <option value="">Seleccione Sección</option>
-              <option value="01" ${activeFilter.seccion === '01' ? 'selected' : ''}>01</option>
-              <option value="02" ${activeFilter.seccion === '02' ? 'selected' : ''}>02</option>
             </select>
           </div>
           <div>
             <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Estudiante (Opcional)</label>
             <select id="ent06-estudiante" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500">
               <option value="">Todos los Estudiantes</option>
-              ${estudiantes.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('')}
             </select>
+            <p id="ent06-estudiante-hint" class="text-[10px] text-slate-400 mt-1 italic">Selecciona una asignatura y sección para acotar la lista.</p>
           </div>
           <div class="flex gap-2 pt-2">
             <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition font-title">Generar Reporte</button>
@@ -1388,6 +1391,82 @@ async function renderENT06() {
     </div>
   `;
 
+  // Funcion para repoblar el select de secciones cuando cambia periodo o asignatura
+  function repoblarSecciones() {
+    const selPeriodo = document.getElementById('ent06-periodo');
+    const selAsig = document.getElementById('ent06-asignatura');
+    const selSeccion = document.getElementById('ent06-seccion');
+    if (!selPeriodo || !selAsig || !selSeccion) return;
+
+    const idPeriodoSel = Number(selPeriodo.options[selPeriodo.selectedIndex]?.dataset.id);
+    const codAsigSel = selAsig.value;
+
+    const filtradas = secciones.filter(s => {
+      // Si no se reconoce idPeriodoSel (NaN o 0), no filtramos por periodo
+      const matchPeriodo = !idPeriodoSel || s.id_periodo === idPeriodoSel;
+      const matchAsig = !codAsigSel || (s.codigo_asignatura && s.codigo_asignatura === codAsigSel)
+        || (s.id_asignatura && asignaturas.find(a => a.codigo === codAsigSel)?.id_asignatura === s.id_asignatura);
+      return matchPeriodo && matchAsig;
+    });
+
+    selSeccion.innerHTML = '<option value="">Seleccione Sección</option>'
+      + filtradas.map(s => {
+        const num = s.numero_seccion != null ? String(s.numero_seccion).padStart(2, '0') : (s.numero || '');
+        const label = num ? `Sección ${num}` : `Sección ${s.id_seccion}`;
+        return `<option value="${s.id_seccion}" ${activeFilter.seccion == s.id_seccion ? 'selected' : ''}>${label}</option>`;
+      }).join('');
+
+    if (filtradas.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No hay secciones para este periodo';
+      opt.disabled = true;
+      selSeccion.appendChild(opt);
+    }
+  }
+
+  // Repoblar el select de estudiantes segun la seccion seleccionada.
+  // Solo se muestran los estudiantes matriculados en esa seccion.
+  // Si no hay seccion, se muestran todos los estudiantes activos (modo global).
+  async function repoblarEstudiantes() {
+    const selSeccion = document.getElementById('ent06-seccion');
+    const selEstudiante = document.getElementById('ent06-estudiante');
+    const hint = document.getElementById('ent06-estudiante-hint');
+    if (!selSeccion || !selEstudiante) return;
+
+    const idSeccion = Number(selSeccion.value);
+    if (!idSeccion) {
+      // Sin seccion -> modo global: lista de todos los estudiantes activos
+      const lista = (estudiantes || []).filter(e => !e.estado || e.estado === 'Activo');
+      selEstudiante.innerHTML = '<option value="">Todos los Estudiantes</option>'
+        + lista.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
+      if (hint) hint.textContent = 'Mostrando todos los estudiantes activos (sin sección seleccionada).';
+      return;
+    }
+
+    try {
+      const matriculados = await apiClient.getEstudiantesDeSeccion(idSeccion);
+      if (!matriculados || matriculados.length === 0) {
+        selEstudiante.innerHTML = '<option value="">No hay estudiantes matriculados en esta sección</option>';
+        if (hint) hint.textContent = `La sección ${idSeccion} no tiene estudiantes matriculados.`;
+        return;
+      }
+      selEstudiante.innerHTML = '<option value="">Todos los Estudiantes</option>'
+        + matriculados.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
+      if (hint) hint.textContent = `Mostrando solo los ${matriculados.length} estudiante(s) matriculado(s) en esta sección.`;
+    } catch (error) {
+      selEstudiante.innerHTML = '<option value="">Error al cargar estudiantes</option>';
+      if (hint) hint.textContent = 'Error al cargar estudiantes de la sección: ' + error.message;
+    }
+  }
+
+  // Poblar inicialmente y enlazar cambios
+  document.getElementById('ent06-periodo').addEventListener('change', () => { repoblarSecciones(); repoblarEstudiantes(); });
+  document.getElementById('ent06-asignatura').addEventListener('change', () => { repoblarSecciones(); repoblarEstudiantes(); });
+  document.getElementById('ent06-seccion').addEventListener('change', repoblarEstudiantes);
+  repoblarSecciones();
+  repoblarEstudiantes();
+
   actualizarEstatusFiltro();
 
   document.getElementById('form-ent06').addEventListener('submit', function (e) {
@@ -1403,6 +1482,8 @@ async function renderENT06() {
   document.getElementById('btn-limpiar-ent06').addEventListener('click', () => {
     activeFilter = { periodo: '', asignatura: '', seccion: '', estudiante: '' };
     document.getElementById('form-ent06').reset();
+    repoblarSecciones();
+    repoblarEstudiantes();
     showToast('Filtros limpiados.');
     actualizarEstatusFiltro();
   });
@@ -2347,7 +2428,7 @@ async function renderRPT04() {
     const reprobados = [];
     notas.forEach(nota => {
       if (nota.notaFinal < 60.0) {
-        const est = estudiantes.find(e => e.matricula === nota.idEstudiante);
+        const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
         const asig = asignaturas.find(a => a.codigo === nota.idAsignatura);
         if (est && asig) {
           reprobados.push({
@@ -2433,11 +2514,11 @@ async function enviarAlertasRPT04() {
     const notificaciones = [];
     notas.forEach(nota => {
       if (nota.notaFinal < 60.0) {
-        const est = estudiantes.find(e => e.matricula === nota.idEstudiante);
+        const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
         const asig = asignaturas.find(a => a.codigo === nota.idAsignatura);
         if (est && asig) {
           notificaciones.push({
-            id_estudiante: est.matricula,
+            id_estudiante: est.id_estudiante,
             asunto: 'Alerta Académica: Riesgo Detectado',
             mensaje: `Se ha detectado riesgo académico en la materia ${asig.codigo} (${asig.nombre}) con un promedio de ${nota.notaFinal.toFixed(1)}. Consulte con su asesor.`,
             fecha_envio: new Date().toISOString().split('T')[0],
@@ -2511,85 +2592,6 @@ async function renderRPT07() {
   }
 }
 
-// ============================================================
-// 14. RPT-08: HISTORIAL DE IMPORTACIÓN / EXPORTACIÓN
-// ============================================================
-async function renderRPT08() {
-  tituloModulo.textContent = 'RPT-08 · Reporte de Importación / Exportación';
-  try {
-    const logs = await apiClient.getLogs();
-    let filasHTML = '';
-    if (logs.length === 0) {
-      filasHTML = `<tr><td colspan="7" class="p-6 text-center text-slate-400 italic">No hay logs de operaciones en el sistema.</td></tr>`;
-    } else {
-      filasHTML = logs.map(l => {
-        const badgeType = l.tipo === 'IMPORTACIÓN' ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800';
-        return `
-          <tr class="border-b border-slate-100 hover:bg-slate-50 transition text-xs">
-            <td class="p-3 font-mono font-bold text-slate-700">${l.id_log}</td>
-            <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${badgeType} font-title">${l.tipo}</span></td>
-            <td class="p-3 font-semibold text-slate-800">${l.evento}</td>
-            <td class="p-3 font-mono text-slate-500">${l.periodo}</td>
-            <td class="p-3 text-slate-800 font-bold text-center font-mono">${l.registros}</td>
-            <td class="p-3 font-mono text-slate-600">${l.archivo}</td>
-            <td class="p-3 text-slate-400 font-mono">${l.fecha}</td>
-          </tr>
-        `;
-      }).join('');
-    }
-    contenedor.innerHTML = `
-      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
-        <div class="flex justify-between items-center pb-4 border-b border-slate-100 flex-wrap gap-2">
-          <div>
-            <h3 class="font-title text-lg font-bold text-slate-800">Historial de Cargas y Descargas</h3>
-            <p class="text-xs text-slate-400 mt-1">Bitácora de auditoría de archivos subidos y generados en taskUni.</p>
-          </div>
-          <button onclick="simularImportacionExcel()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition shadow font-title flex items-center gap-1">
-            <span class="material-symbols-outlined text-sm">upload_file</span> [ SIMULAR IMPORTACIÓN EXCEL ]
-          </button>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse">
-            <thead>
-              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] font-title">
-                <th class="p-3">ID Log</th>
-                <th class="p-3">Tipo</th>
-                <th class="p-3">Evento</th>
-                <th class="p-3">Periodo</th>
-                <th class="p-3 text-center">Registros</th>
-                <th class="p-3">Nombre Archivo</th>
-                <th class="p-3">Fecha</th>
-              </tr>
-            </thead>
-            <tbody>${filasHTML}</tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  } catch (error) {
-    showToast('Error al cargar logs: ' + error.message, 'error');
-  }
-}
-
-async function simularImportacionExcel() {
-  const archivo = prompt('Ingrese el nombre del archivo de simulación (ej. estudiantes_cómputos.xlsx):', 'alumnos_nuevos.xlsx');
-  if (!archivo) return;
-  const reg = Math.floor(Math.random() * 20) + 1;
-  try {
-    await apiClient.registrarLog({
-      tipo: 'IMPORTACIÓN',
-      evento: 'IMPORTACION_COMPLETADA',
-      periodo: await getPeriodoActivo(),
-      registros: reg,
-      archivo
-    });
-    showToast(`Simulación completada. Se importaron ${reg} registros desde ${archivo}.`);
-    renderRPT08();
-  } catch (error) {
-    showToast('Error al simular importación: ' + error.message, 'error');
-  }
-}
-
 async function getPeriodoActivo() {
   try {
     const periodos = await apiClient.getPeriodos();
@@ -2616,9 +2618,9 @@ async function renderRPT05() {
         <div class="flex gap-2 w-full md:w-auto">
           <select id="rpt05-filter-color" class="px-3 py-1.5 border rounded-lg text-xs font-title font-bold focus:ring-1 focus:ring-emerald-500">
             <option value="">Todos los Estados</option>
-            <option value="verde">🟢 Verde (>= 3.2)</option>
-            <option value="amarillo">🟡 Amarillo (2.5 - 3.2)</option>
-            <option value="rojo">🔴 Rojo (< 2.5)</option>
+            <option value="verde">Verde (>= 3.2)</option>
+            <option value="amarillo">Amarillo (2.5 - 3.2)</option>
+            <option value="rojo">Rojo (< 2.5)</option>
           </select>
           <input type="text" id="rpt05-search" placeholder="Buscar alumno..." class="px-3 py-1.5 border rounded-lg text-xs w-full sm:w-56">
         </div>
@@ -2674,24 +2676,24 @@ async function actualizarGridSemaforo() {
       const tieneNotas = notasEst.length > 0;
 
       let colorBadge = 'bg-slate-100 text-slate-500 border-slate-200';
-      let semIcon = '⚪';
+      let semIcon = 'O';
       let semText = 'Sin Notas';
       let progBarColor = 'bg-slate-300';
 
       if (tieneNotas) {
         if (ind >= config.verde) {
           colorBadge = 'bg-emerald-50 text-emerald-700 border-emerald-200';
-          semIcon = '🟢';
+          semIcon = 'V';
           semText = 'Verde (Alto)';
           progBarColor = 'bg-emerald-500';
         } else if (ind >= config.amarillo) {
           colorBadge = 'bg-amber-50 text-amber-700 border-amber-200';
-          semIcon = '🟡';
+          semIcon = 'A';
           semText = 'Amarillo (Alerta)';
           progBarColor = 'bg-amber-500';
         } else {
           colorBadge = 'bg-rose-50 text-rose-700 border-rose-200';
-          semIcon = '🔴';
+          semIcon = 'R';
           semText = 'Rojo (Riesgo)';
           progBarColor = 'bg-rose-500';
         }
@@ -3225,7 +3227,8 @@ async function cargarIndiceYSituacionEstudiante() {
     window.simData = {
       ptsAcumulados: totalPtsHonor,
       creditosAcumulados: totalCreditosConNota,
-      indiceActual: indice
+      indiceActual: indice,
+      config: config
     };
   } catch (error) {
     showToast('Error al cargar índice: ' + error.message, 'error');
@@ -3247,7 +3250,7 @@ function actualizarCalculoSimulado() {
   const totalPts = window.simData.ptsAcumulados + ptsSimulados;
   const totalCred = window.simData.creditosAcumulados + credSimulados;
   const nuevoIndice = totalCred > 0 ? totalPts / totalCred : 0.00;
-  const config = { verde: 3.2, amarillo: 2.5 }; // Se podría obtener de la API, pero usamos valores por defecto.
+  const config = window.simData.config || { verde: 3.2, amarillo: 2.5 };
   const semaforo = obtenerEstadoSemaforo(nuevoIndice, config);
   document.getElementById('sim-indice-proyectado').textContent = nuevoIndice.toFixed(2);
   document.getElementById('sim-semaforo-color').textContent = semaforo.label;
@@ -3284,8 +3287,7 @@ function generarMenuLateral(rol) {
       { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> RPT-13 · Índice Académico', action: 'rpt13' },
       { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> RPT-01 · Boletín Oficial', action: 'rpt01' },
       { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Conversión', action: 'rpt06' },
-      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Correos', action: 'rpt07' },
-      { id: 'rpt08', label: '<span class="material-symbols-outlined text-base">database</span> RPT-08 · Logs Import/Export', action: 'rpt08' }
+      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Correos', action: 'rpt07' }
     );
   } else if (rol === 'maestro') {
     items.push(
