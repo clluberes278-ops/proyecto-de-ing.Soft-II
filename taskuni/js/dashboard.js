@@ -218,12 +218,20 @@ async function renderInicio() {
       apiClient.getNotas()
     ]);
 
-    const totalEstudiantes = estudiantes.filter(e => e.estado === 'Activo').length;
+    // Si la cuenta es de un estudiante, todo el panel refleja SOLO sus datos:
+    // semáforo, contadores, promedio, etc. Si es admin/maestro, mantenemos
+    // la vista global previa.
+    let listaEstudiantes = estudiantes;
+    if (currentUser.rol === 'estudiante') {
+      listaEstudiantes = estudiantes.filter(e => e.correo === currentUser.usuario);
+    }
+
+    const totalEstudiantes = listaEstudiantes.filter(e => !e.estado || e.estado === 'Activo').length;
     const totalAsignaturas = asignaturas.length;
 
     let sumIndices = 0, totalConIndice = 0, estudiantesEnRojo = 0;
-    estudiantes.forEach(est => {
-      if (est.estado !== 'Activo') return;
+    listaEstudiantes.forEach(est => {
+      if (est.estado && est.estado !== 'Activo') return;
       const ind = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
       if (notas.some(n => n.matriculaEstudiante === est.matricula)) {
         sumIndices += ind;
@@ -315,7 +323,7 @@ async function renderInicio() {
             <p class="text-xs text-slate-400">Estado de riesgo académico global de acuerdo a los umbrales configurados.</p>
           </div>
           <div class="my-6 space-y-3">
-            ${renderMiniGraficoSemaforo(estudiantes, notas, config)}
+            ${renderMiniGraficoSemaforo(listaEstudiantes, notas, config)}
           </div>
           <button onclick="renderView('rpt05')" class="w-full text-center py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition font-title flex items-center justify-center gap-1">
             <span class="material-symbols-outlined text-sm">traffic</span> Ver Detalle del Semáforo
@@ -329,15 +337,20 @@ async function renderInicio() {
 }
 
 function renderMiniGraficoSemaforo(estudiantes, notas, config) {
+  // Si la sesión es de un estudiante, sólo mostramos su semáforo, no el global.
+  let lista = estudiantes;
+  if (currentUser && currentUser.rol === 'estudiante') {
+    lista = estudiantes.filter(e => e.correo === currentUser.usuario);
+  }
   let verde = 0, amarillo = 0, rojo = 0;
-  estudiantes.forEach(est => {
+  lista.forEach(est => {
     const ind = calcularIndiceEstudiante(est.matricula, notas, []);
     if (!notas.some(n => n.matriculaEstudiante === est.matricula)) return;
     if (ind >= config.verde) verde++;
     else if (ind >= config.amarillo) amarillo++;
     else rojo++;
   });
-  const total = estudiantes.length || 1;
+  const total = lista.length || 1;
   const pVerde = (verde / total) * 100;
   const pAmarillo = (amarillo / total) * 100;
   const pRojo = (rojo / total) * 100;
@@ -1333,9 +1346,31 @@ async function renderENT06() {
   tituloModulo.textContent = 'ENT-06 · Filtros para Reportes';
 
   const periodos = await apiClient.getPeriodos();
-  const asignaturas = await apiClient.getAsignaturas();
+
+  // For teachers, only show subjects they teach
+  let asignaturas;
+  if (currentUser.rol === 'maestro') {
+    // Get only subjects taught by this teacher
+    asignaturas = await apiClient.getAsignaturas({ idProfesor: currentUser.idReferencia });
+  } else {
+    // For admin and students, show all subjects
+    asignaturas = await apiClient.getAsignaturas();
+  }
+
+  // Para el maestro, las secciones del select deben restringirse a las que
+  // pertenecen a SUS materias. De lo contrario, podría elegir una sección que
+  // no imparte y ver estudiantes ajenos.
+  let secciones = await apiClient.getSecciones();
+  if (currentUser.rol === 'maestro') {
+    const codigosDelProfesor = new Set(asignaturas.map(a => a.codigo));
+    secciones = secciones.filter(s => codigosDelProfesor.has(s.codigo_asignatura || s.codigoAsignatura));
+  }
+
+  // Para el maestro, los estudiantes del combo se restringen a los que
+  // están inscritos en secciones de sus materias (a través de
+  // repoblarEstudiantes). Cargamos el catálogo completo aquí y filtramos
+  // más adelante según la sección seleccionada.
   const estudiantes = await apiClient.getEstudiantes();
-  const secciones = await apiClient.getSecciones();
 
   // Secciones filtrables segun el periodo seleccionado; empieza con todas
   // para que el select no quede vacio antes de elegir periodo.
@@ -1427,7 +1462,8 @@ async function renderENT06() {
 
   // Repoblar el select de estudiantes segun la seccion seleccionada.
   // Solo se muestran los estudiantes matriculados en esa seccion.
-  // Si no hay seccion, se muestran todos los estudiantes activos (modo global).
+  // Si no hay seccion, para profesores mostramos solo estudiantes de sus materias,
+  // para otros roles mostramos todos los estudiantes activos (modo global).
   async function repoblarEstudiantes() {
     const selSeccion = document.getElementById('ent06-seccion');
     const selEstudiante = document.getElementById('ent06-estudiante');
@@ -1436,11 +1472,67 @@ async function renderENT06() {
 
     const idSeccion = Number(selSeccion.value);
     if (!idSeccion) {
-      // Sin seccion -> modo global: lista de todos los estudiantes activos
-      const lista = (estudiantes || []).filter(e => !e.estado || e.estado === 'Activo');
-      selEstudiante.innerHTML = '<option value="">Todos los Estudiantes</option>'
-        + lista.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
-      if (hint) hint.textContent = 'Mostrando todos los estudiantes activos (sin sección seleccionada).';
+      // Sin seccion -> modo especial para profesores: solo estudiantes de sus materias
+      if (currentUser.rol === 'maestro') {
+        try {
+          // Get sections for the current period and teacher's subjects
+          const periodoSel = document.getElementById('ent06-periodo').value;
+          if (!periodoSel) {
+            // No period selected, show empty list
+            selEstudiante.innerHTML = '<option value="">Seleccione un período primero</option>';
+            if (hint) hint.textContent = 'Seleccione un período para ver los estudiantes de sus materias.';
+            return;
+          }
+
+          // Get all sections for the current period
+          const seccionesPeriodo = secciones.filter(s => s.periodo === periodoSel);
+
+          // Get sections that belong to the teacher's subjects
+          const seccionesDeMisMaterias = seccionesPeriodo.filter(s =>
+            asignaturas.some(a => a.codigo === s.codigo_asignatura)
+          );
+
+          // Get unique student IDs from these sections
+          const estudianteIds = new Set();
+          const estudiantesPromises = seccionesDeMisMaterias.map(s =>
+            apiClient.getEstudiantesDeSeccion(s.id_seccion)
+          );
+
+          const estudiantesArrays = await Promise.all(estudiantesPromises);
+          estudiantesArrays.forEach(estudiantesArray => {
+            if (estudiantesArray) {
+              estudiantesArray.forEach(est => estudianteIds.add(est.matricula));
+            }
+          });
+
+          // Filter the master student list to only include these students
+          const lista = estudiantes.filter(e => estudianteIds.has(e.matricula) &&
+                                              (!e.estado || e.estado === 'Activo'));
+
+          if (lista.length === 0) {
+            selEstudiante.innerHTML = '<option value="">No hay estudiantes activos en sus materias</option>';
+            if (hint) hint.textContent = 'No hay estudiantes activos matriculados en sus materias para el período seleccionado.';
+            return;
+          }
+
+          selEstudiante.innerHTML = '<option value="">Todos los Estudiantes</option>'
+            + lista.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
+          if (hint) hint.textContent = `Mostrando solo los ${lista.length} estudiante(s) activo(s) de sus materias.`;
+        } catch (error) {
+          console.error('Error al cargar estudiantes de materias del profesor:', error);
+          // Fallback to showing all active students
+          const lista = (estudiantes || []).filter(e => !e.estado || e.estado === 'Activo');
+          selEstudiante.innerHTML = '<option value="">Todos los Estudiantes</option>'
+            + lista.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
+          if (hint) hint.textContent = 'Error al cargar datos. Mostrando todos los estudiantes activos.';
+        }
+      } else {
+        // For non-teachers (admin, student), show all active students
+        const lista = (estudiantes || []).filter(e => !e.estado || e.estado === 'Activo');
+        selEstudiante.innerHTML = '<option value="">Todos los Estudiantes</option>'
+          + lista.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
+        if (hint) hint.textContent = 'Mostrando todos los estudiantes activos (sin sección seleccionada).';
+      }
       return;
     }
 
@@ -1451,9 +1543,36 @@ async function renderENT06() {
         if (hint) hint.textContent = `La sección ${idSeccion} no tiene estudiantes matriculados.`;
         return;
       }
+
+      // For teachers, additionally filter to only show students in their subjects
+      let estudiantesParaMostrar = matriculados;
+      if (currentUser.rol === 'maestro') {
+        // Filter to only include students enrolled in subjects taught by this teacher
+        estudiantesParaMostrar = matriculados.filter(est =>
+          asignaturas.some(asig => asig.codigo === est.codigo_asignatura ||
+                               // Handle case where student data might not have codigo_asignatura directly
+                               secciones.some(sec => sec.id_seccion === est.id_seccion &&
+                                                    sec.codigo_asignatura &&
+                                                    asignaturas.some(a => a.codigo === sec.codigo_asignatura)))
+        );
+
+        // If filtering results in empty list, show a message but still show the filtered list
+        if (estudiantesParaMostrar.length === 0 && matriculados.length > 0) {
+          // This means the section exists but none of its students are in the teacher's subjects
+          // We'll still show the section's students but add a hint
+          if (hint) hint.textContent = `Advertencia: Esta sección podría no pertenecer a sus materias. Mostrando todos sus ${matriculados.length} estudiantes.`;
+        }
+      }
+
+      if (estudiantesParaMostrar.length === 0) {
+        selEstudiante.innerHTML = '<option value="">No hay estudiantes matriculados en esta sección</option>';
+        if (hint) hint.textContent = `La sección ${idSeccion} no tiene estudiantes matriculados.`;
+        return;
+      }
+
       selEstudiante.innerHTML = '<option value="">Todos los Estudiantes</option>'
-        + matriculados.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
-      if (hint) hint.textContent = `Mostrando solo los ${matriculados.length} estudiante(s) matriculado(s) en esta sección.`;
+        + estudiantesParaMostrar.map(e => `<option value="${e.matricula}" ${activeFilter.estudiante === e.matricula ? 'selected' : ''}>${e.matricula} - ${e.nombre}</option>`).join('');
+      if (hint) hint.textContent = `Mostrando solo los ${estudiantesParaMostrar.length} estudiante(s) matriculado(s) en esta sección.`;
     } catch (error) {
       selEstudiante.innerHTML = '<option value="">Error al cargar estudiantes</option>';
       if (hint) hint.textContent = 'Error al cargar estudiantes de la sección: ' + error.message;
@@ -2700,13 +2819,25 @@ async function actualizarGridSemaforo() {
   const searchVal = document.getElementById('rpt05-search').value.trim().toLowerCase();
 
   try {
-    const [estudiantes, carreras, config, notas, asignaturas] = await Promise.all([
+    // Get all students data
+    const [estudiantesAll, carreras, config, notas, asignaturas] = await Promise.all([
       apiClient.getEstudiantes(),
       apiClient.getCarreras(),
       apiClient.getConfiguracion(),
       apiClient.getNotas(),
       apiClient.getAsignaturas()
     ]);
+
+    // Si la sesión es de un estudiante, mostramos solo su tarjeta de semáforo.
+    // Antes se hacía con mutación del array (length=0, push) que era confuso y
+    // propenso a errores; aquí hacemos un filtro inmutable.
+    let estudiantes = estudiantesAll;
+    if (currentUser.rol === 'estudiante') {
+      estudiantes = estudiantesAll.filter(e => e.correo === currentUser.usuario);
+    }
+    // Si es maestro, podría filtrarse a los estudiantes de sus materias; por
+    // ahora se mantiene la lista completa para que pueda ver la población
+    // general, pero si quieres lo acotamos más.
 
     let filtrados = estudiantes.filter(est => {
       const matchesSearch = est.nombre.toLowerCase().includes(searchVal) || est.matricula.includes(searchVal);
@@ -3014,17 +3145,56 @@ async function cargarPensumEstudiante() {
     }
     const carreraNombre = est.carreraNombre || est.carreraCodigo || '—';
 
-    // El backend ya filtra por carrera (GET /api/pensum/:idCarrera), no hace falta filtrar de nuevo aquí
-    const pensumCarrera = await apiClient.getPensum(est.id_carrera);
+    // Usamos el endpoint dedicado que ya combina estudiante + carrera + pensum
+    // y devuelve tanto creditos_requeridos como las asignaturas del pensum.
+    // Es más robusto que armar el query a mano y devuelve 404 si la carrera
+    // no existe.
+    const pensumResp = await apiClient.getPensumPorEstudiante(selectedStudentIndex);
+    const pensumRaw = pensumResp?.asignaturas || (Array.isArray(pensumResp) ? pensumResp : []);
+    // El backend usa alias 'codigo' y 'nombre' en este endpoint; normalizamos
+    // para que el resto del código siga funcionando con codigo_asignatura /
+    // nombre_asignatura como en el resto de endpoints.
+    const pensumCarrera = pensumRaw.map(p => ({
+      ...p,
+      codigo_asignatura: p.codigo || p.codigo_asignatura,
+      nombre_asignatura: p.nombre || p.nombre_asignatura
+    }));
+    // creditos_requeridos viene como id_pensum.creditos_requeridos; lo
+    // buscamos en la primera fila del JOIN (cada asignatura del pensum trae
+    // el campo) o lo leemos de pensumResp.pensum si el backend lo expone.
+    let totalCreditosRequeridos =
+      pensumCarrera[0]?.creditos_requeridos ||
+      pensumResp?.pensum?.creditos_requeridos ||
+      0;
+
+    // FALLBACK: si el endpoint dedicado no devolvió asignaturas (típicamente
+    // porque la carrera aún no tiene un Pensum activo con asignaturas
+    // asociadas), caemos al endpoint /api/asignaturas filtrado por la carrera
+    // del estudiante. Esto evita que RPT-12 se quede en blanco cuando el
+    // pensum no se ha configurado todavía.
+    let listaAsignaturasParaMostrar = pensumCarrera;
+    if (listaAsignaturasParaMostrar.length === 0) {
+      console.warn('[RPT-12] Pensum vacío, usando fallback de asignaturas por carrera.');
+      listaAsignaturasParaMostrar = asignaturas
+        .filter(a => String(a.id_carrera) === String(est.id_carrera))
+        .map(a => ({
+          codigo_asignatura: a.codigo,
+          nombre_asignatura: a.nombre,
+          creditos: a.creditos
+        }));
+      // Si tampoco hay fallback, totalizamos por lo que sumen las asignaturas
+      if (totalCreditosRequeridos === 0) {
+        totalCreditosRequeridos = listaAsignaturasParaMostrar.reduce((acc, p) => acc + (p.creditos || 0), 0);
+      }
+    }
+
     let creditosAprobados = 0;
     let creditosPendientes = 0;
-    // creditos_requeridos es el total de la carrera (viene repetido en cada fila del JOIN), no se suma por asignatura
-    const totalCreditosRequeridos = pensumCarrera[0]?.creditos_requeridos || 0;
 
     let asignaturasPensumHTML = '';
     let pendientesListHTML = '';
 
-    pensumCarrera.forEach(p => {
+    listaAsignaturasParaMostrar.forEach(p => {
       const asig = asignaturas.find(a => a.codigo === p.codigo_asignatura) || { codigo: p.codigo_asignatura, nombre: p.nombre_asignatura, creditos: p.creditos };
       const nota = notas.find(n => n.idAsignatura === p.codigo_asignatura);
 
@@ -3181,7 +3351,18 @@ async function cargarIndiceYSituacionEstudiante() {
       showToast('Este estudiante no tiene una carrera asignada.', 'error');
       return;
     }
-    const pensum = await apiClient.getPensum(est.id_carrera);
+    // Usamos el endpoint dedicado que combina estudiante + carrera + pensum.
+    // Antes se llamaba getPensum(est.id_carrera) que dependía de que existiera
+    // un pensum activo y del nombre de campo id_carrera — fallaba silenciosamente
+    // cuando la carrera no tenía pensums. Con el endpoint dedicado fallamos
+    // rápido si no hay pensum, y normalizamos los alias.
+    const pensumResp = await apiClient.getPensumPorEstudiante(selectedStudentIndex);
+    const pensumRaw = pensumResp?.asignaturas || (Array.isArray(pensumResp) ? pensumResp : []);
+    const pensum = pensumRaw.map(p => ({
+      ...p,
+      codigo_asignatura: p.codigo || p.codigo_asignatura,
+      nombre_asignatura: p.nombre || p.nombre_asignatura
+    }));
 
     let totalPtsHonor = 0;
     let totalCreditosConNota = 0;
