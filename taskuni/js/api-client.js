@@ -13,8 +13,9 @@
 
 const apiClient = (() => {
     // URL base del servidor backend
-    const API_BASE_URL = 'http://localhost:3000/api';
-    const API_BASE_URL_LOCAL = 'http://127.0.0.1:5500/api';
+    // Usa el mismo hostname desde donde se abrió la página,
+    // así funciona en cualquier red sin cambiar nada.
+    const API_BASE_URL = `http://${window.location.hostname}:3000/api`;
 
     // Función auxiliar para hacer requests
     async function makeRequest(endpoint, options = {}) {
