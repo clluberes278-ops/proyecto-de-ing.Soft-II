@@ -49,7 +49,6 @@ router.get('/', async (req, res) => {
                 n.nota_final,
                 n.nota_literal,
                 n.estado,
-                n.estado,
                 e.matricula AS matricula_estudiante,
                 e.nombre AS nombre_estudiante,
                 a.nombre_asignatura

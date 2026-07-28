@@ -411,7 +411,13 @@ app.get('/api/asignaturas', async (req, res) => {
             }
             if (idProf !== null) {
                 reqAsig.input('idProf', mssql.Int, idProf);
-                whereProfesor = 'WHERE a.id_profesor = @idProf';
+                // La relación real profesor-asignatura vive en Seccion.id_profesor
+                // (quién imparte esa materia en qué período), no en Asignatura.id_profesor,
+                // que en la práctica queda sin poblar. Se incluye también a.id_profesor
+                // por si en el futuro se usa como "dueño" de la asignatura.
+                whereProfesor = `WHERE a.id_profesor = @idProf OR a.id_asignatura IN (
+                    SELECT s.id_asignatura FROM Seccion s WHERE s.id_profesor = @idProf
+                )`;
             }
         }
 

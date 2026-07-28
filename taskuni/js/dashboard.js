@@ -148,7 +148,7 @@ function calcularIndiceEstudiante(matricula, notas, asignaturas) {
   if (notasEst.length === 0) return 0.0;
   let totalPts = 0, totalCred = 0;
   notasEst.forEach(nota => {
-    const asig = asignaturas.find(a => a.codigo === nota.idAsignatura);
+    const asig = asignaturas.find(a => a.id_asignatura === nota.idAsignatura);
     const creditos = asig ? asig.creditos : 0;
     const pts = literalAPuntos(nota.literal);
     totalPts += pts * creditos;
@@ -161,6 +161,22 @@ function obtenerEstadoSemaforo(indice, config) {
   if (indice >= config.verde) return { label: 'Verde (Alto)', color: 'bg-emerald-500', text: 'text-emerald-500', border: 'border-emerald-200', bg: 'bg-emerald-50' };
   if (indice >= config.amarillo) return { label: 'Amarillo (Alerta)', color: 'bg-amber-500', text: 'text-amber-500', border: 'border-amber-200', bg: 'bg-amber-50' };
   return { label: 'Rojo (Riesgo)', color: 'bg-rose-500', text: 'text-rose-500', border: 'border-rose-200', bg: 'bg-rose-50' };
+}
+
+// Devuelve el set de matrículas de los estudiantes inscritos en secciones
+// que imparte el maestro autenticado (por id_profesor === currentUser.idReferencia).
+// Se usa para acotar reportes (semáforo, alertas de riesgo) a sus propias
+// materias en lugar de mostrar la población completa de estudiantes.
+// Devuelve null si no aplica (no es maestro), para que el llamador sepa que
+// no debe filtrar.
+async function obtenerMatriculasEstudiantesDeMaestro() {
+  if (!currentUser || currentUser.rol !== 'maestro' || !currentUser.idReferencia) return null;
+  const secciones = await apiClient.getSecciones();
+  const misSecciones = secciones.filter(s => s.id_profesor === currentUser.idReferencia);
+  const listas = await Promise.all(misSecciones.map(s => apiClient.getEstudiantesDeSeccion(s.id)));
+  const matriculas = new Set();
+  listas.forEach(lista => (lista || []).forEach(e => matriculas.add(e.matricula)));
+  return matriculas;
 }
 
 // ============ VISTAS Y RENDERIZADO ============
@@ -1447,8 +1463,8 @@ async function renderENT06() {
     selSeccion.innerHTML = '<option value="">Seleccione Sección</option>'
       + filtradas.map(s => {
         const num = s.numero_seccion != null ? String(s.numero_seccion).padStart(2, '0') : (s.numero || '');
-        const label = num ? `Sección ${num}` : `Sección ${s.id_seccion}`;
-        return `<option value="${s.id_seccion}" ${activeFilter.seccion == s.id_seccion ? 'selected' : ''}>${label}</option>`;
+        const label = num ? `Sección ${num}` : `Sección ${s.id}`;
+        return `<option value="${s.id}" ${activeFilter.seccion == s.id ? 'selected' : ''}>${label}</option>`;
       }).join('');
 
     if (filtradas.length === 0) {
@@ -1489,13 +1505,13 @@ async function renderENT06() {
 
           // Get sections that belong to the teacher's subjects
           const seccionesDeMisMaterias = seccionesPeriodo.filter(s =>
-            asignaturas.some(a => a.codigo === s.codigo_asignatura)
+            asignaturas.some(a => a.codigo === s.codigoAsignatura)
           );
 
           // Get unique student IDs from these sections
           const estudianteIds = new Set();
           const estudiantesPromises = seccionesDeMisMaterias.map(s =>
-            apiClient.getEstudiantesDeSeccion(s.id_seccion)
+            apiClient.getEstudiantesDeSeccion(s.id)
           );
 
           const estudiantesArrays = await Promise.all(estudiantesPromises);
@@ -1544,25 +1560,11 @@ async function renderENT06() {
         return;
       }
 
-      // For teachers, additionally filter to only show students in their subjects
-      let estudiantesParaMostrar = matriculados;
-      if (currentUser.rol === 'maestro') {
-        // Filter to only include students enrolled in subjects taught by this teacher
-        estudiantesParaMostrar = matriculados.filter(est =>
-          asignaturas.some(asig => asig.codigo === est.codigo_asignatura ||
-                               // Handle case where student data might not have codigo_asignatura directly
-                               secciones.some(sec => sec.id_seccion === est.id_seccion &&
-                                                    sec.codigo_asignatura &&
-                                                    asignaturas.some(a => a.codigo === sec.codigo_asignatura)))
-        );
-
-        // If filtering results in empty list, show a message but still show the filtered list
-        if (estudiantesParaMostrar.length === 0 && matriculados.length > 0) {
-          // This means the section exists but none of its students are in the teacher's subjects
-          // We'll still show the section's students but add a hint
-          if (hint) hint.textContent = `Advertencia: Esta sección podría no pertenecer a sus materias. Mostrando todos sus ${matriculados.length} estudiantes.`;
-        }
-      }
+      // No hace falta re-filtrar aquí: idSeccion viene del select de "Sección",
+      // que ya está acotado a las secciones del maestro (ver "secciones" más
+      // arriba, filtrado por codigosDelProfesor). Todo estudiante que devuelva
+      // getEstudiantesDeSeccion para esa sección ya pertenece a su materia.
+      const estudiantesParaMostrar = matriculados;
 
       if (estudiantesParaMostrar.length === 0) {
         selEstudiante.innerHTML = '<option value="">No hay estudiantes matriculados en esta sección</option>';
@@ -2525,10 +2527,10 @@ async function cargarBoletinEstudiante() {
       listadoNotasHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 italic">No registra materias cursadas.</td></tr>`;
     } else {
       listadoNotasHTML = notas.map(n => {
-        const asig = asignaturas.find(a => a.codigo === n.idAsignatura) || { nombre: n.idAsignatura, creditos: 0 };
+        const asig = asignaturas.find(a => a.id_asignatura === n.idAsignatura) || { codigo: n.idAsignatura, nombre: n.nombreAsignatura || n.idAsignatura, creditos: 0 };
         return `
           <tr class="border-b border-slate-100 text-xs">
-            <td class="p-3 font-mono font-bold text-slate-700">${n.idAsignatura}</td>
+            <td class="p-3 font-mono font-bold text-slate-700">${asig.codigo}</td>
             <td class="p-3 text-slate-800 font-bold">${asig.nombre}</td>
             <td class="p-3 text-center text-slate-500 font-mono">${asig.creditos}</td>
             <td class="p-3 text-center font-semibold text-slate-500 font-mono">${n.notaFinal.toFixed(1)}</td>
@@ -2597,17 +2599,19 @@ async function renderRPT04() {
   tituloModulo.textContent = 'RPT-04 · Alertas de Riesgo Académico';
 
   try {
-    const [notas, estudiantes, asignaturas] = await Promise.all([
+    const [notas, estudiantes, asignaturas, misMatriculas] = await Promise.all([
       apiClient.getNotas(),
       apiClient.getEstudiantes(),
-      apiClient.getAsignaturas()
+      apiClient.getAsignaturas(),
+      obtenerMatriculasEstudiantesDeMaestro()
     ]);
 
     const reprobados = [];
     notas.forEach(nota => {
+      if (misMatriculas && !misMatriculas.has(nota.matriculaEstudiante)) return;
       if (nota.notaFinal < 60.0) {
         const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
-        const asig = asignaturas.find(a => a.codigo === nota.idAsignatura);
+        const asig = asignaturas.find(a => a.id_asignatura === nota.idAsignatura);
         if (est && asig) {
           reprobados.push({
             matricula: est.matricula,
@@ -2684,16 +2688,18 @@ async function renderRPT04() {
 
 async function enviarAlertasRPT04() {
   try {
-    const [notas, estudiantes, asignaturas] = await Promise.all([
+    const [notas, estudiantes, asignaturas, misMatriculas] = await Promise.all([
       apiClient.getNotas(),
       apiClient.getEstudiantes(),
-      apiClient.getAsignaturas()
+      apiClient.getAsignaturas(),
+      obtenerMatriculasEstudiantesDeMaestro()
     ]);
     const notificaciones = [];
     notas.forEach(nota => {
+      if (misMatriculas && !misMatriculas.has(nota.matriculaEstudiante)) return;
       if (nota.notaFinal < 60.0) {
         const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
-        const asig = asignaturas.find(a => a.codigo === nota.idAsignatura);
+        const asig = asignaturas.find(a => a.id_asignatura === nota.idAsignatura);
         if (est && asig) {
           notificaciones.push({
             id_estudiante: est.id_estudiante,
@@ -2722,17 +2728,32 @@ async function enviarAlertasRPT04() {
 async function renderRPT07() {
   tituloModulo.textContent = 'RPT-07 · Notificaciones de Correo';
   try {
-    const [notificaciones, estudiantes] = await Promise.all([
+    const [notificacionesAll, estudiantes, misMatriculas] = await Promise.all([
       apiClient.getNotificaciones(),
-      apiClient.getEstudiantes()
+      apiClient.getEstudiantes(),
+      obtenerMatriculasEstudiantesDeMaestro()
     ]);
+
+    // n.id_estudiante es el id_estudiante numérico (columna INT en Notificacion),
+    // por lo que el cruce con Estudiante debe ser por id, no por matrícula.
+    let notificaciones = notificacionesAll;
+    if (currentUser.rol === 'estudiante') {
+      const yo = estudiantes.find(e => e.correo === currentUser.usuario);
+      notificaciones = yo ? notificacionesAll.filter(n => n.id_estudiante === yo.id_estudiante) : [];
+    } else if (currentUser.rol === 'maestro' && misMatriculas) {
+      const idsDeMisEstudiantes = new Set(
+        estudiantes.filter(e => misMatriculas.has(e.matricula)).map(e => e.id_estudiante)
+      );
+      notificaciones = notificacionesAll.filter(n => idsDeMisEstudiantes.has(n.id_estudiante));
+    }
+
     let filasHTML = '';
     if (notificaciones.length === 0) {
       filasHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 italic">No se han registrado correos enviados.</td></tr>`;
     } else {
       filasHTML = notificaciones.map(n => {
-        const est = estudiantes.find(e => e.matricula === n.id_estudiante);
-        const email = est ? est.correo : `${n.id_estudiante}@unphu.edu.do`;
+        const est = estudiantes.find(e => e.id_estudiante === n.id_estudiante);
+        const email = est ? est.correo : `id_estudiante ${n.id_estudiante} (no encontrado)`;
         return `
           <tr class="border-b border-slate-100 hover:bg-slate-50 transition text-xs">
             <td class="p-3 font-mono font-bold text-slate-700">${n.id_notificacion}</td>
@@ -2834,10 +2855,14 @@ async function actualizarGridSemaforo() {
     let estudiantes = estudiantesAll;
     if (currentUser.rol === 'estudiante') {
       estudiantes = estudiantesAll.filter(e => e.correo === currentUser.usuario);
+    } else if (currentUser.rol === 'maestro') {
+      // Un maestro solo debe ver el semáforo de los estudiantes inscritos en
+      // secciones que él imparte, no la población completa de la universidad.
+      const misMatriculas = await obtenerMatriculasEstudiantesDeMaestro();
+      if (misMatriculas) {
+        estudiantes = estudiantesAll.filter(e => misMatriculas.has(e.matricula));
+      }
     }
-    // Si es maestro, podría filtrarse a los estudiantes de sus materias; por
-    // ahora se mantiene la lista completa para que pueda ver la población
-    // general, pero si quieres lo acotamos más.
 
     let filtrados = estudiantes.filter(est => {
       const matchesSearch = est.nombre.toLowerCase().includes(searchVal) || est.matricula.includes(searchVal);
@@ -3178,6 +3203,7 @@ async function cargarPensumEstudiante() {
       listaAsignaturasParaMostrar = asignaturas
         .filter(a => String(a.id_carrera) === String(est.id_carrera))
         .map(a => ({
+          id_asignatura: a.id_asignatura,
           codigo_asignatura: a.codigo,
           nombre_asignatura: a.nombre,
           creditos: a.creditos
@@ -3196,7 +3222,7 @@ async function cargarPensumEstudiante() {
 
     listaAsignaturasParaMostrar.forEach(p => {
       const asig = asignaturas.find(a => a.codigo === p.codigo_asignatura) || { codigo: p.codigo_asignatura, nombre: p.nombre_asignatura, creditos: p.creditos };
-      const nota = notas.find(n => n.idAsignatura === p.codigo_asignatura);
+      const nota = notas.find(n => n.idAsignatura === p.id_asignatura);
 
       let stateColor = 'bg-slate-50 border-slate-200 text-slate-500';
       let stateLabel = 'Pendiente';
@@ -3372,14 +3398,14 @@ async function cargarIndiceYSituacionEstudiante() {
       detalleFilasHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-400 italic">No hay calificaciones registradas.</td></tr>`;
     } else {
       detalleFilasHTML = notas.map(n => {
-        const asig = asignaturas.find(a => a.codigo === n.idAsignatura) || { nombre: n.idAsignatura, creditos: 0 };
+        const asig = asignaturas.find(a => a.id_asignatura === n.idAsignatura) || { codigo: n.idAsignatura, nombre: n.nombreAsignatura || n.idAsignatura, creditos: 0 };
         const pts = literalAPuntos(n.literal);
         const ptsCr = pts * asig.creditos;
         totalPtsHonor += ptsCr;
         totalCreditosConNota += asig.creditos;
         return `
           <tr class="border-b border-slate-100 text-xs hover:bg-slate-50 transition">
-            <td class="p-3 font-mono font-bold text-slate-700">${n.idAsignatura}</td>
+            <td class="p-3 font-mono font-bold text-slate-700">${asig.codigo}</td>
             <td class="p-3 text-slate-800 font-bold">${asig.nombre}</td>
             <td class="p-3 text-center font-bold text-slate-500 font-mono">${asig.creditos}</td>
             <td class="p-3 text-center text-slate-800 font-bold font-title">${n.literal}</td>
@@ -3396,7 +3422,7 @@ async function cargarIndiceYSituacionEstudiante() {
     // El backend ya filtra por carrera (GET /api/pensum/:idCarrera), pensum ya viene acotado
     const pensumCarrera = pensum;
     const materiasAprobadas = notas.filter(n => n.estado === 'Aprobado').map(n => n.idAsignatura);
-    const materiasPendientes = pensumCarrera.filter(p => !materiasAprobadas.includes(p.codigo_asignatura));
+    const materiasPendientes = pensumCarrera.filter(p => !materiasAprobadas.includes(p.id_asignatura));
 
     let simuladorSeccionHTML = '';
     if (materiasPendientes.length === 0) {
