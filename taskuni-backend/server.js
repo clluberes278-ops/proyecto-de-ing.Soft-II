@@ -23,6 +23,11 @@ const notasRouter = require('./routes/notas');
 const facultadesRouter = require('./routes/facultades');
 const seccionesEstudiantesRouter = require('./routes/secciones-estudiantes');   // NUEVO
 const carrerasRouter = require('./routes/carreras'); // NUEVO
+const mailRouter = require('./routes/mail'); // NUEVO
+
+// Envío de correo para las alertas de RPT-04. Si el .env no trae credenciales
+// SMTP, el módulo entra en modo simulación en vez de romper el endpoint.
+const mailer = require('./mailer');
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -90,6 +95,7 @@ app.use('/api/notas', notasRouter);
 app.use('/api/facultades', facultadesRouter);
 app.use('/api/secciones', seccionesEstudiantesRouter);
 app.use('/api/carreras', carrerasRouter); // NUEVO
+app.use('/api/mail', mailRouter); // NUEVO
 // ============================================================================
 // ============================================================================
 // ENDPOINTS DE AUTENTICACIÓN
@@ -434,7 +440,12 @@ app.get('/api/asignaturas', async (req, res) => {
                 a.id_pensum,
                 a.id_profesor,
                 pr.codigo_profesor AS profesorCodigo,
-                pr.nombre AS profesorNombre,
+                -- La relación real profesor-asignatura vive en Seccion.id_profesor;
+                -- Asignatura.id_profesor casi nunca está poblado. Se prioriza el
+                -- "dueño" de la asignatura si existe y si no se agregan los
+                -- profesores que la imparten en alguna sección (pueden ser varios).
+                COALESCE(pr.nombre, sec.profesoresSeccion) AS profesorNombre,
+                sec.profesoresSeccion,
                 c.id_carrera,
                 c.nombre_carrera AS carreraNombre,
                 a.estado
@@ -442,6 +453,15 @@ app.get('/api/asignaturas', async (req, res) => {
             LEFT JOIN Pensum p ON a.id_pensum = p.id_pensum
             LEFT JOIN Carrera c ON p.id_carrera = c.id_carrera
             LEFT JOIN Profesor pr ON a.id_profesor = pr.id_profesor
+            OUTER APPLY (
+                SELECT STUFF((
+                    SELECT DISTINCT ', ' + pr2.nombre
+                    FROM Seccion s2
+                    JOIN Profesor pr2 ON pr2.id_profesor = s2.id_profesor
+                    WHERE s2.id_asignatura = a.id_asignatura
+                    FOR XML PATH(''), TYPE
+                ).value('.', 'NVARCHAR(MAX)'), 1, 2, '') AS profesoresSeccion
+            ) sec
             ${whereProfesor}
             ORDER BY a.nombre_asignatura
         `);
@@ -974,46 +994,92 @@ app.get('/api/notificaciones', async (req, res) => {
     }
 });
 
+// Crea notificaciones e intenta enviarlas por correo. El estado guardado
+// refleja el resultado real del envío ('Enviada' / 'Fallida' / 'Simulada'),
+// no un 'Enviado' optimista como antes. La fila se inserta SIEMPRE, incluso si
+// el correo falla, para no perder el rastro de a quién falta avisarle.
 app.post('/api/notificaciones', async (req, res) => {
     try {
         const { notificaciones } = req.body; // Array
         if (!notificaciones || !Array.isArray(notificaciones) || notificaciones.length === 0) {
             return res.status(400).json({ success: false, error: 'Debe enviar un arreglo de notificaciones' });
         }
+
+        const resultados = [];
         for (const n of notificaciones) {
-            const { id_estudiante, asunto, mensaje, fecha_envio, estado } = n;
+            const { id_estudiante, asunto, mensaje, fecha_envio } = n;
             if (!id_estudiante) {
                 return res.status(400).json({ success: false, error: 'Cada notificación requiere id_estudiante' });
             }
-            // Resolver matrícula o id numérico al id_estudiante real (la columna es INT).
+            // Resolver matrícula o id numérico al id_estudiante real (la columna
+            // es INT) y de paso traer el correo, que hace falta para enviar.
             let idEst;
+            let correoEst = null;
             if (!isNaN(id_estudiante)) {
                 idEst = Number(id_estudiante);
+                const r = await pool.request()
+                    .input('id', mssql.Int, idEst)
+                    .query('SELECT correo FROM Estudiante WHERE id_estudiante = @id');
+                if (r.recordset.length === 0) {
+                    return res.status(404).json({ success: false, error: `Estudiante no encontrado: ${id_estudiante}` });
+                }
+                correoEst = r.recordset[0].correo;
             } else {
                 const r = await pool.request()
                     .input('matricula', mssql.VarChar(20), id_estudiante)
-                    .query('SELECT id_estudiante FROM Estudiante WHERE matricula = @matricula');
+                    .query('SELECT id_estudiante, correo FROM Estudiante WHERE matricula = @matricula');
                 if (r.recordset.length === 0) {
                     return res.status(404).json({ success: false, error: `Estudiante no encontrado: ${id_estudiante}` });
                 }
                 idEst = r.recordset[0].id_estudiante;
+                correoEst = r.recordset[0].correo;
             }
+
+            // enviarCorreo() nunca lanza: devuelve el estado a registrar.
+            const envio = await mailer.enviarCorreo({
+                para: correoEst,
+                asunto,
+                mensaje
+            });
+
             await pool.request()
                 .input('id_estudiante', mssql.Int, idEst)
                 .input('asunto', mssql.VarChar(200), asunto)
                 .input('mensaje', mssql.VarChar(500), mensaje)
                 .input('fecha_envio', mssql.Date, fecha_envio || new Date())
-                .input('estado', mssql.VarChar(20), estado || 'Enviado')
+                .input('estado', mssql.VarChar(20), envio.estado)
                 .query(`
                     INSERT INTO Notificacion (id_estudiante, asunto, mensaje, fecha_envio, estado)
                     VALUES (@id_estudiante, @asunto, @mensaje, @fecha_envio, @estado)
                 `);
+
+            resultados.push({
+                id_estudiante: idEst,
+                correo: correoEst,
+                estado: envio.estado,
+                detalle: envio.detalle
+            });
         }
-        res.json({ success: true, message: `Creadas ${notificaciones.length} notificaciones` });
+
+        const contar = (e) => resultados.filter(r => r.estado === e).length;
+        const resumen = {
+            enviadas: contar('Enviada'),
+            fallidas: contar('Fallida'),
+            simuladas: contar('Simulada')
+        };
+
+        res.json({
+            success: true,
+            message: `Registradas ${resultados.length} notificaciones`,
+            smtpConfigurado: mailer.smtpConfigurado(),
+            resumen,
+            resultados
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
 
 // ============================================================================
 // ENDPOINTS PARA LOGS (Import/Export)
@@ -1128,6 +1194,18 @@ app.use((err, req, res, next) => {
 
 async function start() {
     await initializeDatabase();
+
+    // Avisar temprano del estado del SMTP: es mejor enterarse aquí que cuando
+    // alguien pulse "enviar alertas" en RPT-04.
+    const estadoMail = await mailer.verificarConexion();
+    if (!estadoMail.configurado) {
+        console.warn(`[mailer] SMTP no configurado (faltan: ${estadoMail.faltantes.join(', ')}). Las alertas se registrarán como 'Simulada'.`);
+    } else if (!estadoMail.ok) {
+        console.warn(`[mailer] SMTP configurado pero la conexión falló: ${estadoMail.error}`);
+    } else {
+        console.log(`[mailer] SMTP listo (${process.env.SMTP_HOST}:${process.env.SMTP_PORT}).`);
+    }
+
     app.listen(PORT, () => {
         console.log('');
         console.log('╔════════════════════════════════════════════════════════╗');
@@ -1158,6 +1236,7 @@ async function start() {
         console.log('  [PUT]    /api/configuracion');
         console.log('  [GET]    /api/notificaciones');
         console.log('  [POST]   /api/notificaciones');
+        console.log('  [GET]    /api/mail/estado');
         console.log('  [GET]    /api/logs');
         console.log('  [POST]   /api/logs');
         console.log('  [GET]    /api/pensum/:idCarrera');

@@ -496,6 +496,22 @@ const apiClient = (() => {
         });
     }
 
+    /**
+     * Estado de la configuración de correo del backend.
+     * Sirve para que la UI no prometa envíos que no van a ocurrir.
+     * @returns {Promise<{configurado: boolean, ok: boolean, error?: string, faltantes?: string[]}>}
+     */
+    async function getEstadoCorreo() {
+        try {
+            const response = await makeRequest('/mail/estado');
+            return response.data;
+        } catch (error) {
+            // Si el backend es una versión vieja sin este endpoint, asumimos que
+            // no hay correo configurado en vez de romper la vista.
+            return { configurado: false, ok: false, error: error.message };
+        }
+    }
+
     // ========================================================================
     // MÉTODOS PÚBLICOS - LOGS (Import/Export)
     // ========================================================================
@@ -612,6 +628,7 @@ const apiClient = (() => {
         // Notificaciones
         getNotificaciones,
         crearNotificaciones,
+        getEstadoCorreo,
         // Logs
         registrarLog,
         getPensum,

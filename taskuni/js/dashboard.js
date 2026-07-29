@@ -1,7 +1,10 @@
 // ============ ESTADO Y VARIABLES GLOBALES ============
 let currentUser = null;
 let selectedStudentIndex = '';
-let activeFilter = { periodo: '', asignatura: '', seccion: '', estudiante: '' };
+// OJO: `seccion` guarda el id_seccion (numérico), que es lo que consumen los
+// reportes. `seccionLabel` guarda el texto visible ("Sección 01") sólo para
+// mostrarlo en pantalla: son cosas distintas y no deben intercambiarse.
+let activeFilter = { periodo: '', asignatura: '', seccion: '', seccionLabel: '', estudiante: '' };
 
 // ============ SIDEBAR RESPONSIVE ============
 function openSidebar() {
@@ -183,7 +186,37 @@ async function obtenerMatriculasEstudiantesDeMaestro() {
 const contenedor = document.getElementById('contenedor-modulo');
 const tituloModulo = document.getElementById('titulo-modulo');
 
+// Mismos permisos que generarMenuLateral(): qué vistas puede alcanzar cada
+// rol. renderView() la usa para bloquear accesos directos (URL/consola) a
+// módulos que el menú ya oculta pero que antes se podían renderizar igual.
+const VISTAS_POR_ROL = {
+  admin: ['inicio', 'ent01', 'ent02', 'ent03', 'ent04', 'ent05', 'ent06', 'ent07', 'ent08', 'ent09', 'ent10',
+    'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt11', 'rpt12', 'rpt13'],
+  maestro: ['inicio', 'ent06', 'ent07', 'rpt04', 'rpt06', 'rpt07', 'rpt11'],
+  estudiante: ['inicio', 'ent11', 'rpt01', 'rpt05', 'rpt06', 'rpt07', 'rpt12', 'rpt13']
+};
+
+function renderAccesoDenegado(viewName) {
+  tituloModulo.textContent = 'Acceso denegado';
+  contenedor.innerHTML = `
+    <div class="bg-white p-8 rounded-2xl border border-rose-100 shadow-sm flex items-center gap-4">
+      <div class="p-3 bg-rose-50 text-rose-600 rounded-xl flex items-center">
+        <span class="material-symbols-outlined text-3xl">block</span>
+      </div>
+      <div>
+        <h4 class="font-title text-lg font-bold text-slate-800">No tenés permiso para ver este módulo</h4>
+        <p class="text-xs text-slate-500 mt-1">El módulo "${viewName}" no está disponible para el rol "${currentUser?.rol || ''}".</p>
+      </div>
+    </div>
+  `;
+}
+
 async function renderView(viewName) {
+  const permitidas = VISTAS_POR_ROL[currentUser?.rol] || [];
+  if (!permitidas.includes(viewName)) {
+    renderAccesoDenegado(viewName);
+    return;
+  }
   document.querySelectorAll('.menu-item').forEach(el => {
     el.classList.remove('bg-slate-800', 'text-white', 'border-l-4', 'border-emerald-500');
     el.classList.add('text-slate-400');
@@ -227,36 +260,52 @@ async function renderView(viewName) {
 async function renderInicio() {
   tituloModulo.textContent = 'Panel General';
   try {
-    const [estudiantes, asignaturas, config, notas] = await Promise.all([
+    const esMaestro = currentUser.rol === 'maestro';
+    // Se piden DOS listas de asignaturas a propósito:
+    //  - asignaturasCatalogo: catálogo completo. Es la base del cálculo de
+    //    índice, que pondera por créditos. Debe incluir todas las materias del
+    //    estudiante, porque los umbrales de ConfiguracionUmbral están definidos
+    //    sobre el índice global, no sobre el rendimiento en una sola clase.
+    //  - asignaturas: lo que se muestra en el contador "Materias Activas", que
+    //    para el maestro sí se acota a las suyas.
+    const [estudiantes, asignaturasCatalogo, asignaturasPropias, config, notas, misMatriculas] = await Promise.all([
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
+      esMaestro ? apiClient.getAsignaturas({ idProfesor: currentUser.idReferencia }) : Promise.resolve(null),
       apiClient.getConfiguracion(),
-      apiClient.getNotas()
+      apiClient.getNotas(),
+      esMaestro ? obtenerMatriculasEstudiantesDeMaestro() : Promise.resolve(null)
     ]);
+    const asignaturas = asignaturasPropias || asignaturasCatalogo;
 
     // Si la cuenta es de un estudiante, todo el panel refleja SOLO sus datos:
-    // semáforo, contadores, promedio, etc. Si es admin/maestro, mantenemos
-    // la vista global previa.
+    // semáforo, contadores, promedio, etc. Si es maestro, se acota a los
+    // estudiantes inscritos en sus propias secciones (misMatriculas).
     let listaEstudiantes = estudiantes;
     if (currentUser.rol === 'estudiante') {
       listaEstudiantes = estudiantes.filter(e => e.correo === currentUser.usuario);
+    } else if (esMaestro && misMatriculas) {
+      listaEstudiantes = estudiantes.filter(e => misMatriculas.has(e.matricula));
     }
 
     const totalEstudiantes = listaEstudiantes.filter(e => !e.estado || e.estado === 'Activo').length;
     const totalAsignaturas = asignaturas.length;
 
+    // Un estudiante sin notas cargadas NO se clasifica: antes su índice daba 0
+    // y por tanto caía en rojo, inflando la alerta con alumnos que ni siquiera
+    // han cursado nada. Se usa el mismo criterio que renderMiniGraficoSemaforo()
+    // para que la tarjeta y el gráfico den siempre el mismo número.
     let sumIndices = 0, totalConIndice = 0, estudiantesEnRojo = 0;
     listaEstudiantes.forEach(est => {
       if (est.estado && est.estado !== 'Activo') return;
-      const ind = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
-      if (notas.some(n => n.matriculaEstudiante === est.matricula)) {
-        sumIndices += ind;
-        totalConIndice++;
-      }
+      if (!notas.some(n => n.matriculaEstudiante === est.matricula)) return;
+      const ind = calcularIndiceEstudiante(est.matricula, notas, asignaturasCatalogo);
+      sumIndices += ind;
+      totalConIndice++;
       if (ind < config.amarillo) estudiantesEnRojo++;
     });
     const promedioGeneral = totalConIndice > 0 ? sumIndices / totalConIndice : 0;
-    const pctRojo = totalEstudiantes > 0 ? (estudiantesEnRojo / totalEstudiantes) * 100 : 0;
+    const pctRojo = totalConIndice > 0 ? (estudiantesEnRojo / totalConIndice) * 100 : 0;
 
     contenedor.innerHTML = `
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -339,7 +388,7 @@ async function renderInicio() {
             <p class="text-xs text-slate-400">Estado de riesgo académico global de acuerdo a los umbrales configurados.</p>
           </div>
           <div class="my-6 space-y-3">
-            ${renderMiniGraficoSemaforo(listaEstudiantes, notas, config)}
+            ${renderMiniGraficoSemaforo(listaEstudiantes, notas, config, asignaturasCatalogo)}
           </div>
           <button onclick="renderView('rpt05')" class="w-full text-center py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition font-title flex items-center justify-center gap-1">
             <span class="material-symbols-outlined text-sm">traffic</span> Ver Detalle del Semáforo
@@ -352,7 +401,7 @@ async function renderInicio() {
   }
 }
 
-function renderMiniGraficoSemaforo(estudiantes, notas, config) {
+function renderMiniGraficoSemaforo(estudiantes, notas, config, asignaturas) {
   // Si la sesión es de un estudiante, sólo mostramos su semáforo, no el global.
   let lista = estudiantes;
   if (currentUser && currentUser.rol === 'estudiante') {
@@ -360,16 +409,28 @@ function renderMiniGraficoSemaforo(estudiantes, notas, config) {
   }
   let verde = 0, amarillo = 0, rojo = 0;
   lista.forEach(est => {
-    const ind = calcularIndiceEstudiante(est.matricula, notas, []);
+    // Mismo criterio que las tarjetas KPI de renderInicio(): solo estudiantes
+    // activos y con notas cargadas.
+    if (est.estado && est.estado !== 'Activo') return;
     if (!notas.some(n => n.matriculaEstudiante === est.matricula)) return;
+    // `asignaturas` es obligatorio: calcularIndiceEstudiante() pondera por
+    // créditos, así que con una lista vacía totalCred queda en 0 y devuelve 0.0
+    // para todo el mundo (todos caerían en rojo). Ese era el bug original.
+    const ind = calcularIndiceEstudiante(est.matricula, notas, asignaturas || []);
     if (ind >= config.verde) verde++;
     else if (ind >= config.amarillo) amarillo++;
     else rojo++;
   });
-  const total = lista.length || 1;
-  const pVerde = (verde / total) * 100;
-  const pAmarillo = (amarillo / total) * 100;
-  const pRojo = (rojo / total) * 100;
+  // El denominador son los clasificados, no lista.length: si se incluyen los
+  // estudiantes sin notas las barras nunca suman 100% y todo se ve más bajo.
+  const total = verde + amarillo + rojo;
+  const pVerde = total > 0 ? (verde / total) * 100 : 0;
+  const pAmarillo = total > 0 ? (amarillo / total) * 100 : 0;
+  const pRojo = total > 0 ? (rojo / total) * 100 : 0;
+
+  if (total === 0) {
+    return `<p class="text-xs text-slate-400 italic text-center py-6">Aún no hay notas cargadas para clasificar estudiantes.</p>`;
+  }
 
   return `
     <div>
@@ -1487,6 +1548,9 @@ async function renderENT06() {
     if (!selSeccion || !selEstudiante) return;
 
     const idSeccion = Number(selSeccion.value);
+    // Etiqueta visible de la sección ("Sección 01"), para los mensajes al
+    // usuario. Nunca mostrar idSeccion: es la clave interna, no el número.
+    const labelSeccion = selSeccion.options[selSeccion.selectedIndex]?.text || 'la sección seleccionada';
     if (!idSeccion) {
       // Sin seccion -> modo especial para profesores: solo estudiantes de sus materias
       if (currentUser.rol === 'maestro') {
@@ -1556,7 +1620,7 @@ async function renderENT06() {
       const matriculados = await apiClient.getEstudiantesDeSeccion(idSeccion);
       if (!matriculados || matriculados.length === 0) {
         selEstudiante.innerHTML = '<option value="">No hay estudiantes matriculados en esta sección</option>';
-        if (hint) hint.textContent = `La sección ${idSeccion} no tiene estudiantes matriculados.`;
+        if (hint) hint.textContent = `${labelSeccion} no tiene estudiantes matriculados.`;
         return;
       }
 
@@ -1568,7 +1632,7 @@ async function renderENT06() {
 
       if (estudiantesParaMostrar.length === 0) {
         selEstudiante.innerHTML = '<option value="">No hay estudiantes matriculados en esta sección</option>';
-        if (hint) hint.textContent = `La sección ${idSeccion} no tiene estudiantes matriculados.`;
+        if (hint) hint.textContent = `${labelSeccion} no tiene estudiantes matriculados.`;
         return;
       }
 
@@ -1592,16 +1656,20 @@ async function renderENT06() {
 
   document.getElementById('form-ent06').addEventListener('submit', function (e) {
     e.preventDefault();
+    const selSeccionSubmit = document.getElementById('ent06-seccion');
     activeFilter.periodo = document.getElementById('ent06-periodo').value;
     activeFilter.asignatura = document.getElementById('ent06-asignatura').value;
-    activeFilter.seccion = document.getElementById('ent06-seccion').value;
+    activeFilter.seccion = selSeccionSubmit.value;
+    // El value del select es el id_seccion; guardamos aparte la etiqueta visible
+    // para que el panel de estatus muestre lo mismo que eligió el usuario.
+    activeFilter.seccionLabel = selSeccionSubmit.options[selSeccionSubmit.selectedIndex]?.text || '';
     activeFilter.estudiante = document.getElementById('ent06-estudiante').value;
     showToast('Filtro configurado. Reportes desbloqueados.');
     actualizarEstatusFiltro();
   });
 
   document.getElementById('btn-limpiar-ent06').addEventListener('click', () => {
-    activeFilter = { periodo: '', asignatura: '', seccion: '', estudiante: '' };
+    activeFilter = { periodo: '', asignatura: '', seccion: '', seccionLabel: '', estudiante: '' };
     document.getElementById('form-ent06').reset();
     repoblarSecciones();
     repoblarEstudiantes();
@@ -1632,7 +1700,7 @@ function actualizarEstatusFiltro() {
       <div class="grid grid-cols-2 gap-2 text-slate-600 font-semibold">
         <div>Período: <strong class="text-slate-800">${activeFilter.periodo}</strong></div>
         <div>Materia: <strong class="text-slate-800">${activeFilter.asignatura}</strong></div>
-        <div>Sección: <strong class="text-slate-800">${activeFilter.seccion}</strong></div>
+        <div>Sección: <strong class="text-slate-800">${activeFilter.seccionLabel || `ID ${activeFilter.seccion}`}</strong></div>
         <div>${estText}</div>
       </div>
     </div>
@@ -1883,9 +1951,11 @@ async function renderENT07() {
   const secciones = await apiClient.getSecciones();
 
   let materiasFiltradas = asignaturas;
+  let codigoProfesorActual = null;
   if (currentUser.rol === 'maestro') {
     const prof = profesores.find(p => p.correo === currentUser.usuario);
     if (prof) {
+      codigoProfesorActual = prof.codigo;
       const codigosDelProfesor = new Set(
         secciones.filter(s => s.codigoProfesor === prof.codigo).map(s => s.codigoAsignatura)
       );
@@ -1971,7 +2041,9 @@ async function renderENT07() {
       selSeccion.disabled = true;
       return;
     }
-    const seccionesDeLaAsignatura = secciones.filter(s => s.codigoAsignatura === codAsig);
+    const seccionesDeLaAsignatura = secciones.filter(s =>
+      s.codigoAsignatura === codAsig && (!codigoProfesorActual || s.codigoProfesor === codigoProfesorActual)
+    );
     if (seccionesDeLaAsignatura.length === 0) {
       selSeccion.innerHTML = '<option value="">Sin secciones creadas</option>';
       selSeccion.disabled = true;
@@ -2599,17 +2671,43 @@ async function renderRPT04() {
   tituloModulo.textContent = 'RPT-04 · Alertas de Riesgo Académico';
 
   try {
-    const [notas, estudiantes, asignaturas, misMatriculas] = await Promise.all([
-      apiClient.getNotas(),
+    // El período acota las notas. Antes se pedían TODAS y el historial completo
+    // aparecía como alertas vigentes. Se respeta el filtro de ENT-06 si está
+    // configurado; si no, se usa el período activo.
+    const periodo = activeFilter.periodo || await getPeriodoActivo();
+
+    const [notas, estudiantes, asignaturas, config, estadoCorreo, misMatriculas] = await Promise.all([
+      apiClient.getNotas({ periodo }),
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
+      apiClient.getConfiguracion(),
+      apiClient.getEstadoCorreo(),
       obtenerMatriculasEstudiantesDeMaestro()
     ]);
+
+    // Umbral de reprobado leído de ConfiguracionUmbral.riesgo (editable en
+    // ENT-08). Antes estaba fijo en 60.0, así que cambiar la configuración no
+    // tenía ningún efecto aquí: mismo patrón del bug F6 documentado en CAMBIOS.md.
+    const umbralRiesgo = Number(config && config.riesgo != null ? config.riesgo : 60.0);
+
+    // El botón y el aviso cambian según haya o no SMTP realmente operativo, para
+    // no prometer un envío que el backend no puede hacer.
+    const correoActivo = !!(estadoCorreo && estadoCorreo.configurado && estadoCorreo.ok);
+
+    // Defensa en profundidad: si un estudiante llegara a esta vista (aunque
+    // el menú y renderView ya lo bloquean), acotar a su propia matrícula en
+    // vez de mostrar las alertas de toda la universidad.
+    let matriculaPropia = null;
+    if (currentUser.rol === 'estudiante') {
+      const yo = estudiantes.find(e => e.correo === currentUser.usuario);
+      matriculaPropia = yo ? yo.matricula : '__ninguna__';
+    }
 
     const reprobados = [];
     notas.forEach(nota => {
       if (misMatriculas && !misMatriculas.has(nota.matriculaEstudiante)) return;
-      if (nota.notaFinal < 60.0) {
+      if (matriculaPropia && nota.matriculaEstudiante !== matriculaPropia) return;
+      if (nota.notaFinal < umbralRiesgo) {
         const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
         const asig = asignaturas.find(a => a.id_asignatura === nota.idAsignatura);
         if (est && asig) {
@@ -2621,8 +2719,8 @@ async function renderRPT04() {
             nombreAsig: asig.nombre,
             promedio: nota.notaFinal,
             puntos: literalAPuntos(nota.literal),
-            umbral: 60.0,
-            diferencia: nota.notaFinal - 60.0
+            umbral: umbralRiesgo,
+            diferencia: nota.notaFinal - umbralRiesgo
           });
         }
       }
@@ -2650,10 +2748,10 @@ async function renderRPT04() {
         <div class="pb-4 border-b border-slate-100 flex justify-between items-center flex-wrap gap-3">
           <div>
             <h3 class="font-title text-lg font-bold text-slate-800">Detección de Riesgo Académico</h3>
-            <p class="text-xs text-slate-400 mt-1">Estudiantes reprobados con calificaciones de asignatura menores al umbral de 60.0</p>
+            <p class="text-xs text-slate-400 mt-1">Período <strong class="text-slate-600">${periodo}</strong> · estudiantes con calificación de asignatura menor al umbral configurado de <strong class="text-slate-600">${umbralRiesgo.toFixed(1)}</strong></p>
           </div>
           <button onclick="enviarAlertasRPT04()" class="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl transition shadow shadow-rose-600/10 font-title flex items-center gap-1">
-            <span class="material-symbols-outlined text-sm">mail</span> [ ENVIAR ALERTAS POR CORREO ]
+            <span class="material-symbols-outlined text-sm">${correoActivo ? 'mail' : 'notifications_active'}</span> ${correoActivo ? '[ ENVIAR ALERTAS POR CORREO ]' : '[ REGISTRAR ALERTAS ]'}
           </button>
         </div>
         <div class="overflow-x-auto">
@@ -2677,6 +2775,9 @@ async function renderRPT04() {
           <div>
             <h5 class="font-bold">Mensaje Informativo de Alerta</h5>
             <p class="mt-1">"Riesgo académico detectado. Consulte con su asesor de carrera para evaluar plan de tutoría académica."</p>
+            <p class="mt-2 text-[10px] text-rose-700">${correoActivo
+              ? 'El correo se envía al buzón institucional del estudiante y queda registrado en la bitácora (RPT-07) con el resultado del envío.'
+              : `Sin SMTP configurado: las alertas se guardan en la bitácora (RPT-07) con estado "Simulada", pero no sale ningún correo. Configura SMTP_HOST, SMTP_PORT, SMTP_USER y SMTP_PASS en el .env del backend.${estadoCorreo && estadoCorreo.configurado && estadoCorreo.error ? ` Error de conexión actual: ${estadoCorreo.error}` : ''}`}</p>
           </div>
         </div>
       </div>
@@ -2688,51 +2789,138 @@ async function renderRPT04() {
 
 async function enviarAlertasRPT04() {
   try {
-    const [notas, estudiantes, asignaturas, misMatriculas] = await Promise.all([
-      apiClient.getNotas(),
+    // Mismos criterios que renderRPT04(): mismo período y mismo umbral. Si no,
+    // la tabla mostraría una cosa y el botón registraría otra.
+    const periodo = activeFilter.periodo || await getPeriodoActivo();
+
+    const [notas, estudiantes, asignaturas, config, existentes, estadoCorreo, misMatriculas] = await Promise.all([
+      apiClient.getNotas({ periodo }),
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
+      apiClient.getConfiguracion(),
+      apiClient.getNotificaciones(),
+      apiClient.getEstadoCorreo(),
       obtenerMatriculasEstudiantesDeMaestro()
     ]);
+
+    const umbralRiesgo = Number(config && config.riesgo != null ? config.riesgo : 60.0);
+    const correoActivo = !!(estadoCorreo && estadoCorreo.configurado && estadoCorreo.ok);
+
+    // Defensa en profundidad, igual que en renderRPT04().
+    let matriculaPropia = null;
+    if (currentUser.rol === 'estudiante') {
+      const yo = estudiantes.find(e => e.correo === currentUser.usuario);
+      matriculaPropia = yo ? yo.matricula : '__ninguna__';
+    }
+
+    // Clave de deduplicación: estudiante + asunto + mensaje. El mensaje incluye
+    // materia, período y calificación, así que re-ejecutar sin cambios no crea
+    // duplicados, pero si la nota cambia sí se registra una alerta nueva.
+    const yaRegistradas = new Set(
+      (existentes || []).map(n => `${n.id_estudiante}|${n.asunto}|${n.mensaje}`)
+    );
+
     const notificaciones = [];
+    let omitidas = 0;
     notas.forEach(nota => {
       if (misMatriculas && !misMatriculas.has(nota.matriculaEstudiante)) return;
-      if (nota.notaFinal < 60.0) {
-        const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
-        const asig = asignaturas.find(a => a.id_asignatura === nota.idAsignatura);
-        if (est && asig) {
-          notificaciones.push({
-            id_estudiante: est.id_estudiante,
-            asunto: 'Alerta Académica: Riesgo Detectado',
-            mensaje: `Se ha detectado riesgo académico en la materia ${asig.codigo} (${asig.nombre}) con un promedio de ${nota.notaFinal.toFixed(1)}. Consulte con su asesor.`,
-            fecha_envio: new Date().toISOString().split('T')[0],
-            estado: 'Enviado'
-          });
-        }
+      if (matriculaPropia && nota.matriculaEstudiante !== matriculaPropia) return;
+      if (nota.notaFinal >= umbralRiesgo) return;
+
+      const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
+      const asig = asignaturas.find(a => a.id_asignatura === nota.idAsignatura);
+      if (!est || !asig) return;
+
+      const asunto = 'Alerta Académica: Riesgo Detectado';
+      const mensaje = `Riesgo académico en ${asig.codigo} (${asig.nombre}), período ${periodo}: calificación ${nota.notaFinal.toFixed(1)} bajo el umbral de ${umbralRiesgo.toFixed(1)}. Consulte con su asesor.`;
+
+      if (yaRegistradas.has(`${est.id_estudiante}|${asunto}|${mensaje}`)) {
+        omitidas++;
+        return;
       }
+
+      // Sin `estado`: lo decide el backend según el resultado real del envío
+      // ('Enviada' / 'Fallida' / 'Simulada').
+      notificaciones.push({
+        id_estudiante: est.id_estudiante,
+        asunto,
+        mensaje,
+        fecha_envio: new Date().toISOString().split('T')[0]
+      });
     });
-    if (notificaciones.length > 0) {
-      await apiClient.crearNotificaciones(notificaciones);
-      showToast(`Se han enviado exitosamente ${notificaciones.length} correos de alerta.`);
-    } else {
-      showToast('No hay alertas que enviar.', 'error');
+
+    if (notificaciones.length === 0) {
+      showToast(omitidas > 0
+        ? `Sin alertas nuevas: las ${omitidas} detectadas ya están registradas.`
+        : 'No hay alertas que registrar.', 'error');
+      return;
     }
+
+    const omitidasTxt = omitidas > 0 ? ` (${omitidas} ya registradas se omitirán)` : '';
+    const accion = correoActivo
+      ? `Se enviarán ${notificaciones.length} correo(s) a los estudiantes`
+      : `Se registrarán ${notificaciones.length} alerta(s) sin envío real (SMTP no configurado)`;
+    if (!confirm(`${accion} del período ${periodo}${omitidasTxt}.\n\nTodo queda en la bitácora de notificaciones (RPT-07). ¿Continuar?`)) {
+      return;
+    }
+
+    // El backend devuelve el desglose real: qué salió, qué falló y qué quedó
+    // simulado. No damos por enviado nada que el servidor no confirme.
+    const respuesta = await apiClient.crearNotificaciones(notificaciones);
+    const r = (respuesta && respuesta.resumen) || {};
+    const enviadas = r.enviadas || 0;
+    const fallidas = r.fallidas || 0;
+    const simuladas = r.simuladas || 0;
+
+    const partes = [];
+    if (enviadas) partes.push(`${enviadas} enviada(s)`);
+    if (simuladas) partes.push(`${simuladas} simulada(s)`);
+    if (fallidas) partes.push(`${fallidas} fallida(s)`);
+    const detalle = partes.length ? partes.join(', ') : `${notificaciones.length} registrada(s)`;
+
+    showToast(`Alertas procesadas: ${detalle}. Detalle en RPT-07.`, fallidas > 0 ? 'error' : 'success');
   } catch (error) {
-    showToast('Error al enviar alertas: ' + error.message, 'error');
+    showToast('Error al procesar alertas: ' + error.message, 'error');
   }
 }
 
 // ============================================================
 // 13. RPT-07: BITÁCORA DE CORREOS
 // ============================================================
+// fecha_envio es una columna DATE de SQL Server: mssql la serializa a JSON como
+// "2026-07-28T00:00:00.000Z". Se recorta a la fecha, sin zona horaria, para no
+// mostrarle al usuario un timestamp UTC crudo (ni correr el día por la zona).
+function formatearFechaNotificacion(valor) {
+  if (!valor) return '—';
+  const texto = String(valor);
+  const soloFecha = texto.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(soloFecha)
+    ? soloFecha.split('-').reverse().join('/')
+    : texto;
+}
+
+// El badge de estatus era siempre verde, dijera lo que dijera el estado.
+function claseEstadoNotificacion(estado) {
+  const e = String(estado || '').toLowerCase();
+  if (e.includes('error') || e.includes('fall')) return 'bg-rose-100 text-rose-800';
+  if (e.includes('pend')) return 'bg-amber-100 text-amber-800';
+  // "Simulada" = quedó registrada pero no salió correo (SMTP sin configurar).
+  // No debe verse como éxito.
+  if (e.includes('simul')) return 'bg-slate-200 text-slate-600';
+  if (e.includes('envi') || e.includes('registr')) return 'bg-emerald-100 text-emerald-800';
+  return 'bg-slate-100 text-slate-600';
+}
+
 async function renderRPT07() {
-  tituloModulo.textContent = 'RPT-07 · Notificaciones de Correo';
+  tituloModulo.textContent = 'RPT-07 · Bitácora de Notificaciones';
   try {
-    const [notificacionesAll, estudiantes, misMatriculas] = await Promise.all([
+    const [notificacionesAll, estudiantes, estadoCorreo, misMatriculas] = await Promise.all([
       apiClient.getNotificaciones(),
       apiClient.getEstudiantes(),
+      apiClient.getEstadoCorreo(),
       obtenerMatriculasEstudiantesDeMaestro()
     ]);
+    const correoActivo = !!(estadoCorreo && estadoCorreo.configurado && estadoCorreo.ok);
 
     // n.id_estudiante es el id_estudiante numérico (columna INT en Notificacion),
     // por lo que el cruce con Estudiante debe ser por id, no por matrícula.
@@ -2760,24 +2948,27 @@ async function renderRPT07() {
             <td class="p-3 font-semibold text-slate-800">${email}</td>
             <td class="p-3 font-bold text-slate-700">${n.asunto}</td>
             <td class="p-3 text-slate-500 font-medium">${n.mensaje}</td>
-            <td class="p-3 font-mono text-slate-500">${n.fecha_envio}</td>
-            <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800 font-title">${n.estado}</span></td>
+            <td class="p-3 font-mono text-slate-500">${formatearFechaNotificacion(n.fecha_envio)}</td>
+            <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${claseEstadoNotificacion(n.estado)} font-title">${n.estado || 'Sin estado'}</span></td>
           </tr>
         `;
       }).join('');
     }
     contenedor.innerHTML = `
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
-        <h3 class="font-title text-lg font-bold text-slate-800 pb-4 border-b border-slate-100 mb-4">Bitácora de Notificaciones por Correo</h3>
+        <h3 class="font-title text-lg font-bold text-slate-800 pb-4 border-b border-slate-100 mb-4">Bitácora de Notificaciones</h3>
+        <p class="text-xs text-slate-400 -mt-2 mb-4">${notificaciones.length} registro(s). Las alertas se generan desde RPT-04. ${correoActivo
+          ? 'El estatus indica el resultado real del envío por correo.'
+          : 'El SMTP del backend no está configurado, así que los registros nuevos quedan como "Simulada" y no sale ningún correo.'}</p>
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
-                <th class="p-3">ID Correo</th>
+                <th class="p-3">ID</th>
                 <th class="p-3">Destinatario</th>
                 <th class="p-3">Asunto</th>
-                <th class="p-3">Mensaje / Tarea</th>
-                <th class="p-3">Vencimiento / Fecha</th>
+                <th class="p-3">Mensaje</th>
+                <th class="p-3">Fecha</th>
                 <th class="p-3">Estatus</th>
               </tr>
             </thead>
@@ -3577,7 +3768,7 @@ function generarMenuLateral(rol) {
       { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> RPT-13 · Índice Académico', action: 'rpt13' },
       { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> RPT-01 · Boletín Oficial', action: 'rpt01' },
       { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Conversión', action: 'rpt06' },
-      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Correos', action: 'rpt07' }
+      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Alertas', action: 'rpt07' }
     );
   } else if (rol === 'maestro') {
     items.push(
@@ -3589,7 +3780,7 @@ function generarMenuLateral(rol) {
       // expediente del estudiante (carrera, índice acumulado, etc.).
       { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> RPT-11 · Mis Materias', action: 'rpt11' },
       { id: 'rpt04', label: '<span class="material-symbols-outlined text-base">warning</span> RPT-04 · Alertas de Riesgo', action: 'rpt04' },
-      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Correos', action: 'rpt07' },
+      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Alertas', action: 'rpt07' },
       { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Tabla Conversión', action: 'rpt06' }
     );
   } else if (rol === 'estudiante') {
