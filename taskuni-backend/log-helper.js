@@ -10,7 +10,10 @@
 async function registrarLog(pool, sql, { tipo, evento, usuario, entidad, accion, descripcion, periodo, registros, archivo }) {
     try {
         await pool.request()
-            .input('tipo', sql.VarChar(20), tipo || null)
+            // 'tipo' es NOT NULL en Log (columna original, pensada para
+            // IMPORTACIÓN/EXPORTACIÓN); los eventos CRUD no mandan tipo, así
+            // que cae en 'CRUD' en vez de violar la restricción.
+            .input('tipo', sql.VarChar(20), tipo || 'CRUD')
             .input('evento', sql.VarChar(50), evento)
             .input('usuario', sql.VarChar(30), usuario || null)
             .input('entidad', sql.VarChar(30), entidad || null)

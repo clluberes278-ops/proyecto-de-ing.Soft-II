@@ -654,6 +654,7 @@ const apiClient = (() => {
         crearNotificaciones,
         getEstadoCorreo,
         // Logs
+        getLogs,
         registrarLog,
         getPensum,
         getPensumPorEstudiante,

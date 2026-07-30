@@ -188,7 +188,7 @@ const tituloModulo = document.getElementById('titulo-modulo');
 // módulos que el menú ya oculta pero que antes se podían renderizar igual.
 const VISTAS_POR_ROL = {
   admin: ['inicio', 'ent01', 'ent02', 'ent03', 'ent04', 'ent05', 'ent06', 'ent07', 'ent08', 'ent09', 'ent10',
-    'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt11', 'rpt12', 'rpt13', 'rpt14', 'rpt15'],
+    'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt11', 'rpt12', 'rpt13', 'rpt15'],
   maestro: ['inicio', 'ent06', 'ent07', 'rpt04', 'rpt06', 'rpt07', 'rpt11'],
   estudiante: ['inicio', 'ent11', 'rpt01', 'rpt05', 'rpt06', 'rpt07', 'rpt12', 'rpt13']
 };
@@ -245,7 +245,6 @@ async function renderView(viewName) {
     case 'rpt11': await renderRPT11(); break;
     case 'rpt12': await renderRPT12(); break;
     case 'rpt13': await renderRPT13(); break;
-    case 'rpt14': await renderRPT14(); break;
     case 'rpt15': await renderRPT15(); break;
     default: await renderInicio();
   }
@@ -3802,59 +3801,6 @@ function actualizarCalculoSimulado() {
 }
 
 // ============================================================
-// 14. RPT-14 · BITÁCORA DE MANTENIMIENTO DE PENSUM (solo admin)
-// ============================================================
-async function renderRPT14() {
-  tituloModulo.textContent = 'RPT-14 · Bitácora de Mantenimiento de Pensum';
-  contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 text-sm">Cargando bitácora...</div>`;
-
-  try {
-    const registros = await apiClient.getMantenimientoPensum();
-
-    const filasHTML = (registros && registros.length > 0)
-      ? registros.map(r => `
-          <tr class="border-b border-slate-100 text-xs hover:bg-slate-50 transition">
-            <td class="p-3 font-mono text-slate-500">${new Date(r.fecha_cambio).toLocaleString()}</td>
-            <td class="p-3">
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${r.tipo_cambio === 'Agregar' ? 'bg-emerald-100 text-emerald-800' : (r.tipo_cambio === 'Quitar' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}">${r.tipo_cambio}</span>
-            </td>
-            <td class="p-3 font-mono font-bold text-slate-700">${r.codigo_asignatura}</td>
-            <td class="p-3 text-slate-800">${r.nombre_asignatura}</td>
-            <td class="p-3 text-slate-600">${r.nombre_carrera || '-'}</td>
-            <td class="p-3 text-slate-500">${r.usuario || '-'}</td>
-            <td class="p-3 text-slate-500">${r.descripcion || '-'}</td>
-          </tr>
-        `).join('')
-      : `<tr><td colspan="7" class="p-4 text-center text-slate-400 italic">No hay cambios registrados todavía.</td></tr>`;
-
-    contenedor.innerHTML = `
-      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
-        <h3 class="font-title text-md font-bold text-slate-800 pb-4 border-b border-slate-100">Historial de cambios de pensum</h3>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
-                <th class="p-3">Fecha</th>
-                <th class="p-3">Tipo de Cambio</th>
-                <th class="p-3">Asignatura</th>
-                <th class="p-3">Nombre</th>
-                <th class="p-3">Carrera</th>
-                <th class="p-3">Usuario</th>
-                <th class="p-3">Descripción</th>
-              </tr>
-            </thead>
-            <tbody>${filasHTML}</tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  } catch (error) {
-    showToast('Error al cargar la bitácora de pensum: ' + error.message, 'error');
-    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-rose-100 shadow-sm text-center text-rose-500 text-sm">No se pudo cargar la bitácora. ¿Corriste sql/mantenimiento_pensum.sql en la base de datos?</div>`;
-  }
-}
-
-// ============================================================
 // 15. RPT-15 · BITÁCORA DE ACTIVIDAD (dbo.Log, solo admin)
 // ============================================================
 async function renderRPT15() {
@@ -3862,7 +3808,24 @@ async function renderRPT15() {
   contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 text-sm">Cargando bitácora...</div>`;
 
   try {
-    const registros = await apiClient.getLogs();
+    const [logs, mantenimientoPensum] = await Promise.all([
+      apiClient.getLogs(),
+      apiClient.getMantenimientoPensum().catch(() => [])
+    ]);
+
+    // Normalizamos MantenimientoPensum (bitácora específica de cambios de
+    // pensum) a la misma forma que dbo.Log, para mostrar todo junto en una
+    // sola tabla en vez de mantener dos reportes separados (RPT-14/RPT-15).
+    const pensumComoLog = (mantenimientoPensum || []).map(r => ({
+      fecha: r.fecha_cambio,
+      usuario: r.usuario,
+      entidad: 'Pensum',
+      accion: r.tipo_cambio,
+      descripcion: `${r.descripcion || ''}${r.nombre_carrera ? ` (${r.nombre_carrera})` : ''}`.trim()
+    }));
+
+    const registros = [...(logs || []), ...pensumComoLog]
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 
     const filasHTML = (registros && registros.length > 0)
       ? registros.map(r => `
@@ -3872,8 +3835,8 @@ async function renderRPT15() {
             <td class="p-3 font-mono font-bold text-slate-700">${r.entidad || r.tipo || '-'}</td>
             <td class="p-3">
               <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                r.accion === 'CREATE' || r.accion === 'EXPORT' ? 'bg-emerald-100 text-emerald-800'
-                : r.accion === 'DELETE' ? 'bg-rose-100 text-rose-800'
+                ['CREATE', 'EXPORT', 'Agregar'].includes(r.accion) ? 'bg-emerald-100 text-emerald-800'
+                : ['DELETE', 'Quitar'].includes(r.accion) ? 'bg-rose-100 text-rose-800'
                 : 'bg-amber-100 text-amber-800'
               }">${r.accion || r.evento || '-'}</span>
             </td>
@@ -3918,51 +3881,50 @@ function generarMenuLateral(rol) {
   if (rol === 'admin') {
     items.push(
       { header: 'Entradas (Mantenimiento)' },
-      { id: 'ent01', label: '<span class="material-symbols-outlined text-base">group</span> ENT-01 · Estudiantes', action: 'ent01' },
-      { id: 'ent02', label: '<span class="material-symbols-outlined text-base">book</span> ENT-02 · Asignaturas', action: 'ent02' },
-      { id: 'ent03', label: '<span class="material-symbols-outlined text-base">calendar_today</span> ENT-03 · Períodos', action: 'ent03' },
-      { id: 'ent04', label: '<span class="material-symbols-outlined text-base">co_present</span> ENT-04 · Profesores', action: 'ent04' },
-      { id: 'ent05', label: '<span class="material-symbols-outlined text-base">account_balance</span> ENT-05 · Carreras', action: 'ent05' },
-      { id: 'ent10', label: '<span class="material-symbols-outlined text-base">apartment</span> ENT-10 · Facultades', action: 'ent10' },
-      { id: 'ent09', label: '<span class="material-symbols-outlined text-base">room_preferences</span> ENT-09 · Registro Sección', action: 'ent09' },
-      { id: 'ent06', label: '<span class="material-symbols-outlined text-base">filter_alt</span> ENT-06 · Filtro Reportes', action: 'ent06' },
-      { id: 'ent07', label: '<span class="material-symbols-outlined text-base">grade</span> ENT-07 · Carga de Notas', action: 'ent07' },
-      { id: 'ent08', label: '<span class="material-symbols-outlined text-base">settings</span> ENT-08 · Umbrales', action: 'ent08' },
+      { id: 'ent01', label: '<span class="material-symbols-outlined text-base">group</span> Estudiantes', action: 'ent01' },
+      { id: 'ent02', label: '<span class="material-symbols-outlined text-base">book</span> Asignaturas', action: 'ent02' },
+      { id: 'ent03', label: '<span class="material-symbols-outlined text-base">calendar_today</span> Períodos', action: 'ent03' },
+      { id: 'ent04', label: '<span class="material-symbols-outlined text-base">co_present</span> Profesores', action: 'ent04' },
+      { id: 'ent05', label: '<span class="material-symbols-outlined text-base">account_balance</span> Carreras', action: 'ent05' },
+      { id: 'ent10', label: '<span class="material-symbols-outlined text-base">apartment</span> Facultades', action: 'ent10' },
+      { id: 'ent09', label: '<span class="material-symbols-outlined text-base">room_preferences</span> Registro Sección', action: 'ent09' },
+      { id: 'ent06', label: '<span class="material-symbols-outlined text-base">filter_alt</span> Filtro Reportes', action: 'ent06' },
+      { id: 'ent07', label: '<span class="material-symbols-outlined text-base">grade</span> Carga de Notas', action: 'ent07' },
+      { id: 'ent08', label: '<span class="material-symbols-outlined text-base">settings</span> Umbrales', action: 'ent08' },
       { header: 'Reportes e Indicadores' },
-      { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> RPT-11 · Catálogo Materias', action: 'rpt11' },
-      { id: 'rpt05', label: '<span class="material-symbols-outlined text-base">traffic</span> RPT-05 · Semáforo Riesgo', action: 'rpt05' },
-      { id: 'rpt04', label: '<span class="material-symbols-outlined text-base">warning</span> RPT-04 · Alertas de Riesgo', action: 'rpt04' },
-      { id: 'rpt12', label: '<span class="material-symbols-outlined text-base">donut_large</span> RPT-12 · Estado Pensum', action: 'rpt12' },
-      { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> RPT-13 · Índice Académico', action: 'rpt13' },
-      { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> RPT-01 · Boletín Oficial', action: 'rpt01' },
-      { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Conversión', action: 'rpt06' },
-      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Alertas', action: 'rpt07' },
-      { id: 'rpt14', label: '<span class="material-symbols-outlined text-base">history</span> RPT-14 · Bitácora Pensum', action: 'rpt14' },
-      { id: 'rpt15', label: '<span class="material-symbols-outlined text-base">list_alt</span> RPT-15 · Bitácora Actividad', action: 'rpt15' }
+      { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> Catálogo Materias', action: 'rpt11' },
+      { id: 'rpt05', label: '<span class="material-symbols-outlined text-base">traffic</span> Semáforo Riesgo', action: 'rpt05' },
+      { id: 'rpt04', label: '<span class="material-symbols-outlined text-base">warning</span> Alertas de Riesgo', action: 'rpt04' },
+      { id: 'rpt12', label: '<span class="material-symbols-outlined text-base">donut_large</span> Estado Pensum', action: 'rpt12' },
+      { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> Índice Académico', action: 'rpt13' },
+      { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> Boletín Oficial', action: 'rpt01' },
+      { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> Conversión', action: 'rpt06' },
+      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> Bitácora Alertas', action: 'rpt07' },
+      { id: 'rpt15', label: '<span class="material-symbols-outlined text-base">list_alt</span> Bitácora Actividad', action: 'rpt15' }
     );
   } else if (rol === 'maestro') {
     items.push(
       { header: 'Operaciones' },
-      { id: 'ent06', label: '<span class="material-symbols-outlined text-base">filter_alt</span> ENT-06 · Filtro Reportes', action: 'ent06' },
-      { id: 'ent07', label: '<span class="material-symbols-outlined text-base">grade</span> ENT-07 · Carga de Notas', action: 'ent07' },
+      { id: 'ent06', label: '<span class="material-symbols-outlined text-base">filter_alt</span> Filtro Reportes', action: 'ent06' },
+      { id: 'ent07', label: '<span class="material-symbols-outlined text-base">grade</span> Carga de Notas', action: 'ent07' },
       { header: 'Mis materias y reportes' },
       // RPT-01 (Boletín Oficial) removido: un maestro no necesita ver el
       // expediente del estudiante (carrera, índice acumulado, etc.).
-      { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> RPT-11 · Mis Materias', action: 'rpt11' },
-      { id: 'rpt04', label: '<span class="material-symbols-outlined text-base">warning</span> RPT-04 · Alertas de Riesgo', action: 'rpt04' },
-      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Alertas', action: 'rpt07' },
-      { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Tabla Conversión', action: 'rpt06' }
+      { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> Mis Materias', action: 'rpt11' },
+      { id: 'rpt04', label: '<span class="material-symbols-outlined text-base">warning</span> Alertas de Riesgo', action: 'rpt04' },
+      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> Bitácora Alertas', action: 'rpt07' },
+      { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> Tabla Conversión', action: 'rpt06' }
     );
   } else if (rol === 'estudiante') {
     items.push(
       { header: 'Mi Seguimiento' },
-      { id: 'ent11', label: '<span class="material-symbols-outlined text-base">edit_calendar</span> ENT-11 · Inscripción de Materias', action: 'ent11' },
-      { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> RPT-01 · Mi Boletín Oficial', action: 'rpt01' },
-      { id: 'rpt12', label: '<span class="material-symbols-outlined text-base">donut_large</span> RPT-12 · Mi Pensum', action: 'rpt12' },
-      { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> RPT-13 · Mi Índice / Simulador', action: 'rpt13' },
-      { id: 'rpt05', label: '<span class="material-symbols-outlined text-base">traffic</span> RPT-05 · Mi Semáforo', action: 'rpt05' },
-      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Mis Notificaciones', action: 'rpt07' },
-      { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Reglas Equivalencia', action: 'rpt06' }
+      { id: 'ent11', label: '<span class="material-symbols-outlined text-base">edit_calendar</span> Inscripción de Materias', action: 'ent11' },
+      { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> Mi Boletín Oficial', action: 'rpt01' },
+      { id: 'rpt12', label: '<span class="material-symbols-outlined text-base">donut_large</span> Mi Pensum', action: 'rpt12' },
+      { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> Mi Índice / Simulador', action: 'rpt13' },
+      { id: 'rpt05', label: '<span class="material-symbols-outlined text-base">traffic</span> Mi Semáforo', action: 'rpt05' },
+      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> Mis Notificaciones', action: 'rpt07' },
+      { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> Reglas Equivalencia', action: 'rpt06' }
     );
   }
 
