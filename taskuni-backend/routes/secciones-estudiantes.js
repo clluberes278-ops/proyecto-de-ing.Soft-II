@@ -14,6 +14,7 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, sql } = require('../db');
+const { registrarLog } = require('../log-helper');
 
 // Resuelve id_estudiante a partir de matrícula o id numérico
 async function resolverIdEstudiante(pool, valor) {
@@ -107,6 +108,7 @@ router.get('/:id/estudiantes', async (req, res) => {
 // ============================================================================
 router.post('/:id/estudiantes/:idEstudiante', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const pool = await getConnection();
         const idEst = await resolverIdEstudiante(pool, req.params.idEstudiante);
@@ -209,6 +211,11 @@ router.post('/:id/estudiantes/:idEstudiante', async (req, res) => {
                 VALUES (@idSeccion, @idEstudiante, 'Activa')
             `);
 
+        await registrarLog(pool, sql, {
+            evento: 'MATRICULA_CREADA', usuario, entidad: 'Matricula', accion: 'CREATE',
+            descripcion: `Estudiante id ${idEst} inscrito en sección ${id}`
+        });
+
         res.status(201).json({ success: true, message: 'Inscripción realizada correctamente' });
     } catch (error) {
         console.error('Error en POST /secciones/:id/estudiantes/:idEstudiante:', error);
@@ -284,6 +291,7 @@ router.post('/:id/estudiantes', async (req, res) => {
 // ============================================================================
 router.delete('/:id/estudiantes/:idEstudiante', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { id, idEstudiante } = req.params;
         const pool = await getConnection();
         const idEst = await resolverIdEstudiante(pool, idEstudiante);
@@ -296,6 +304,12 @@ router.delete('/:id/estudiantes/:idEstudiante', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'El estudiante no estaba matriculado en esta sección' });
         }
+
+        await registrarLog(pool, sql, {
+            evento: 'MATRICULA_ELIMINADA', usuario, entidad: 'Matricula', accion: 'DELETE',
+            descripcion: `Estudiante id ${idEst} removido de sección ${id}`
+        });
+
         res.json({ success: true, message: 'Estudiante removido de la sección' });
     } catch (error) {
         console.error('Error en DELETE /secciones/:id/estudiantes/:idEstudiante:', error);

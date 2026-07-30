@@ -17,6 +17,18 @@ const apiClient = (() => {
     // así funciona en cualquier red sin cambiar nada.
     const API_BASE_URL = `http://${window.location.hostname}:3000/api`;
 
+    // Correo del usuario de la sesión activa (si hay una), para la bitácora
+    // de actividad (dbo.Log): se manda como header en toda petición en vez de
+    // tener que agregarlo a mano en cada payload de dashboard.js.
+    function obtenerUsuarioSesion() {
+        try {
+            const sesion = JSON.parse(localStorage.getItem('taskUni_sesion'));
+            return sesion && sesion.usuario ? sesion.usuario : '';
+        } catch {
+            return '';
+        }
+    }
+
     // Función auxiliar para hacer requests
     async function makeRequest(endpoint, options = {}) {
         try {
@@ -24,6 +36,7 @@ const apiClient = (() => {
             const config = {
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-Usuario': obtenerUsuarioSesion(),
                     ...options.headers
                 },
                 ...options
@@ -561,6 +574,17 @@ const apiClient = (() => {
         return response.data;
     }
 
+    /**
+     * Obtener la bitácora de MantenimientoPensum (RPT-14)
+     * @param {Object} filtros { idPensum, idCarrera }
+     * @returns {Promise<Array>}
+     */
+    async function getMantenimientoPensum(filtros = {}) {
+        const query = new URLSearchParams(filtros).toString();
+        const response = await makeRequest(`/mantenimiento-pensum${query ? '?' + query : ''}`);
+        return response.data;
+    }
+
     // ========================================================================
     // EXPORTAR API PÚBLICA
     // ========================================================================
@@ -633,6 +657,7 @@ const apiClient = (() => {
         registrarLog,
         getPensum,
         getPensumPorEstudiante,
+        getMantenimientoPensum,
     };
 })();
 

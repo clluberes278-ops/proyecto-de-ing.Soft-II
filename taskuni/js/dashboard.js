@@ -83,6 +83,7 @@ function downloadCSV(filename, csvContent) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  const registros = csvContent.split('\n').length - 1;
   // Guardar log local (opcional)
   let logs = JSON.parse(localStorage.getItem('import_export_logs') || '[]');
   logs.unshift({
@@ -90,34 +91,16 @@ function downloadCSV(filename, csvContent) {
     tipo: 'EXPORTACIÓN',
     evento: 'EXPORTACION_COMPLETADA',
     periodo: 'desconocido',
-    registros: csvContent.split('\n').length - 1,
+    registros,
     archivo: filename,
     fecha: new Date().toISOString().split('T')[0]
   });
   localStorage.setItem('import_export_logs', JSON.stringify(logs));
-}
-
-function downloadJSON(filename, jsonObject) {
-  const blob = new Blob([JSON.stringify(jsonObject, null, 2)], { type: 'application/json' });
-  const link = document.createElement("a");
-  const url = URL.createObjectURL(blob);
-  link.setAttribute("href", url);
-  link.setAttribute("download", filename);
-  link.style.visibility = 'hidden';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  let logs = JSON.parse(localStorage.getItem('import_export_logs') || '[]');
-  logs.unshift({
-    id_log: 'LOG-' + Math.floor(Math.random() * 10000),
-    tipo: 'EXPORTACIÓN',
-    evento: 'EXPORTACION_COMPLETADA',
-    periodo: 'desconocido',
-    registros: 1,
-    archivo: filename,
-    fecha: new Date().toISOString().split('T')[0]
-  });
-  localStorage.setItem('import_export_logs', JSON.stringify(logs));
+  // Bitácora real en el backend (dbo.Log), además del log local de arriba.
+  apiClient.registrarLog({
+    tipo: 'EXPORTACIÓN', evento: 'EXPORTACION_COMPLETADA', entidad: 'Archivo', accion: 'EXPORT',
+    archivo: filename, registros, descripcion: `Exportación CSV: ${filename}`
+  }).catch(err => console.warn('No se pudo registrar la exportación en el backend:', err.message));
 }
 
 // ============ REINICIO (desactivado) ============
@@ -126,14 +109,25 @@ function confirmarReiniciarBase() {
 }
 
 // ============ CÁLCULOS ============
-function calcularLiteralYEstado(notaFinal) {
+// Una nota es "En Curso" (literal 'EC') si falta cualquiera de las 4
+// evaluaciones (acum1/acum2/acum3/eval_final): no se calcula promedio ni
+// literal A-F hasta que las 4 estén cargadas, para no mostrar como
+// "reprobado" a un estudiante que simplemente aún no tiene notas.
+function calcularLiteralYEstado(ac1, ac2, ac3, evalFinal) {
+  const falta = [ac1, ac2, ac3, evalFinal].some(v =>
+    v === '' || v === null || v === undefined || Number.isNaN(Number(v))
+  );
+  if (falta) {
+    return { literal: 'EC', estado: 'En Curso', notaFinal: null };
+  }
+  const notaFinal = (Number(ac1) + Number(ac2) + Number(ac3) + Number(evalFinal)) / 4;
   let literal = 'F';
   if (notaFinal >= 90) literal = 'A';
   else if (notaFinal >= 80) literal = 'B';
   else if (notaFinal >= 70) literal = 'C';
   else if (notaFinal >= 60) literal = 'D';
   const estado = notaFinal >= 60 ? 'Aprobado' : 'Reprobado';
-  return { literal, estado };
+  return { literal, estado, notaFinal };
 }
 
 function literalAPuntos(literal) {
@@ -147,7 +141,10 @@ function literalAPuntos(literal) {
 }
 
 function calcularIndiceEstudiante(matricula, notas, asignaturas) {
-  const notasEst = notas.filter(n => n.matriculaEstudiante === matricula);
+  // Las materias "En Curso" (literal 'EC') se excluyen por completo (puntos
+  // Y créditos), no solo se les asigna 0 puntos: contarlas arrastraría el
+  // índice hacia abajo por materias que ni siquiera tienen nota final.
+  const notasEst = notas.filter(n => n.matriculaEstudiante === matricula && n.literal !== 'EC');
   if (notasEst.length === 0) return 0.0;
   let totalPts = 0, totalCred = 0;
   notasEst.forEach(nota => {
@@ -191,7 +188,7 @@ const tituloModulo = document.getElementById('titulo-modulo');
 // módulos que el menú ya oculta pero que antes se podían renderizar igual.
 const VISTAS_POR_ROL = {
   admin: ['inicio', 'ent01', 'ent02', 'ent03', 'ent04', 'ent05', 'ent06', 'ent07', 'ent08', 'ent09', 'ent10',
-    'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt11', 'rpt12', 'rpt13'],
+    'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt11', 'rpt12', 'rpt13', 'rpt14', 'rpt15'],
   maestro: ['inicio', 'ent06', 'ent07', 'rpt04', 'rpt06', 'rpt07', 'rpt11'],
   estudiante: ['inicio', 'ent11', 'rpt01', 'rpt05', 'rpt06', 'rpt07', 'rpt12', 'rpt13']
 };
@@ -248,6 +245,8 @@ async function renderView(viewName) {
     case 'rpt11': await renderRPT11(); break;
     case 'rpt12': await renderRPT12(); break;
     case 'rpt13': await renderRPT13(); break;
+    case 'rpt14': await renderRPT14(); break;
+    case 'rpt15': await renderRPT15(); break;
     default: await renderInicio();
   }
   document.getElementById('print-area').scrollTop = 0;
@@ -351,7 +350,7 @@ async function renderInicio() {
           <div class="absolute w-40 h-40 rounded-full bg-white/5 -right-10 -bottom-10"></div>
           <div>
             <span class="welcome-badge inline-block px-3 py-1 bg-white/20 rounded-full text-[10px] font-bold uppercase tracking-wider mb-4">SISTEMA INFORMATIVO</span>
-            <h3 class="welcome-title font-title text-3xl font-extrabold mb-2 text-white">Bienvenido, ${currentUser.usuario}</h3>
+            <h3 class="welcome-title font-title text-3xl font-extrabold mb-2 text-white">Bienvenido, ${currentUser.nombreMostrar || currentUser.usuario}</h3>
             <p class="welcome-text text-white text-sm max-w-lg leading-relaxed font-sans">
               Estás conectado con el rol de <strong class="text-white capitalize">${currentUser.rol}</strong>. 
               Utiliza el menú lateral para gestionar la información académica, cargar calificaciones o generar reportes de rendimiento estudiantil bajo la norma de semaforización de taskUni.
@@ -729,11 +728,11 @@ async function renderENT02() {
     }
     try {
       if (asignaturaEditandoCodigo) {
-        await apiClient.actualizarAsignatura(asignaturaEditandoCodigo, { nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa' });
+        await apiClient.actualizarAsignatura(asignaturaEditandoCodigo, { nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa', usuario: currentUser.usuario });
         showToast('Asignatura actualizada con éxito.');
         cancelarEdicionAsignatura();
       } else {
-        await apiClient.crearAsignatura({ codigo: cod, nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa' });
+        await apiClient.crearAsignatura({ codigo: cod, nombre: nom, creditos: cred, id_carrera: carId, estado: 'Activa', usuario: currentUser.usuario });
         showToast('Asignatura guardada con éxito.');
         this.reset();
       }
@@ -1713,7 +1712,7 @@ function actualizarEstatusFiltro() {
         <div>
           <span class="text-[9px] text-emerald-600 font-bold uppercase block font-title">RPT-01</span>
           <h4 class="font-bold text-sm text-slate-800 mt-1 font-title">Boletín Oficial de Calificaciones</h4>
-          <p class="text-[11px] text-slate-400 mt-1 font-sans">Impresión formal y exportación JSON del expediente del estudiante.</p>
+          <p class="text-[11px] text-slate-400 mt-1 font-sans">Impresión formal y exportación Excel del expediente del estudiante.</p>
         </div>
         <span class="text-emerald-600 group-hover:translate-x-1 transition duration-200 text-xs font-bold mt-3 block font-title flex items-center gap-1">Generar Reporte <span class="material-symbols-outlined text-sm">arrow_forward</span></span>
       </button>
@@ -2080,10 +2079,11 @@ async function cargarTablaCalificacionesActa() {
 
     tbody.innerHTML = estudiantes.map(est => {
       const notaExistente = notasDB.find(n => n.matriculaEstudiante === est.matricula) || {
-        acum1: '', acum2: '', acum3: '', evalFinal: '', notaFinal: 0, literal: '-', estado: '-'
+        acum1: '', acum2: '', acum3: '', evalFinal: '', notaFinal: null, literal: 'EC', estado: 'En Curso'
       };
-      const finalVal = notaExistente.notaFinal ? notaExistente.notaFinal.toFixed(2) : '0.00';
-      const finalColor = notaExistente.estado === 'Aprobado' ? 'text-emerald-600 font-bold' : (notaExistente.estado === 'Reprobado' ? 'text-rose-600 font-bold' : '');
+      const finalVal = (notaExistente.notaFinal === null || notaExistente.notaFinal === undefined) ? '—' : notaExistente.notaFinal.toFixed(2);
+      const finalColor = notaExistente.estado === 'Aprobado' ? 'text-emerald-600 font-bold' : (notaExistente.estado === 'Reprobado' ? 'text-rose-600 font-bold' : (notaExistente.estado === 'En Curso' ? 'text-amber-600 font-bold' : ''));
+      const badgeClase = notaExistente.estado === 'Aprobado' ? 'bg-emerald-100 text-emerald-800' : (notaExistente.estado === 'Reprobado' ? 'bg-rose-100 text-rose-800' : (notaExistente.estado === 'En Curso' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'));
       return `
         <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition align-middle" data-matricula="${est.matricula}">
           <td class="p-3 font-mono font-bold text-slate-700">${est.matricula}</td>
@@ -2110,7 +2110,7 @@ async function cargarTablaCalificacionesActa() {
           </td>
           <td class="p-3 text-sm font-semibold text-slate-700"><span class="nota-final-span ${finalColor}">${finalVal}</span></td>
           <td class="p-3 text-sm font-bold text-slate-850"><span class="literal-span">${notaExistente.literal}</span></td>
-          <td class="p-3"><span class="estado-badge-span px-2 py-0.5 rounded-full text-[10px] font-bold ${notaExistente.estado === 'Aprobado' ? 'bg-emerald-100 text-emerald-800' : (notaExistente.estado === 'Reprobado' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-500')}">${notaExistente.estado || '-'}</span></td>
+          <td class="p-3"><span class="estado-badge-span px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeClase}">${notaExistente.estado || '-'}</span></td>
         </tr>
       `;
     }).join('');
@@ -2121,20 +2121,21 @@ async function cargarTablaCalificacionesActa() {
 
 function recalcularNotaFila(input) {
   const fila = input.closest('tr');
-  const ac1 = parseInt(fila.querySelector('[data-campo="ac1"]').value) || 0;
-  const ac2 = parseInt(fila.querySelector('[data-campo="ac2"]').value) || 0;
-  const ac3 = parseInt(fila.querySelector('[data-campo="ac3"]').value) || 0;
-  const exFinal = parseInt(fila.querySelector('[data-campo="final"]').value) || 0;
-  const promedio = (ac1 + ac2 + ac3 + exFinal) / 4;
-  const { literal, estado } = calcularLiteralYEstado(promedio);
+  const ac1 = fila.querySelector('[data-campo="ac1"]').value;
+  const ac2 = fila.querySelector('[data-campo="ac2"]').value;
+  const ac3 = fila.querySelector('[data-campo="ac3"]').value;
+  const exFinal = fila.querySelector('[data-campo="final"]').value;
+  const { literal, estado, notaFinal } = calcularLiteralYEstado(ac1, ac2, ac3, exFinal);
   const spanFinal = fila.querySelector('.nota-final-span');
   const spanLiteral = fila.querySelector('.literal-span');
   const spanBadge = fila.querySelector('.estado-badge-span');
-  spanFinal.textContent = promedio.toFixed(2);
+  spanFinal.textContent = notaFinal === null ? '—' : notaFinal.toFixed(2);
   spanLiteral.textContent = literal;
   spanBadge.textContent = estado;
-  spanFinal.className = `nota-final-span font-bold ${estado === 'Aprobado' ? 'text-emerald-600' : 'text-rose-600'}`;
-  spanBadge.className = `estado-badge-span px-2 py-0.5 rounded-full text-[10px] font-bold ${estado === 'Aprobado' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`;
+  const colorTexto = estado === 'Aprobado' ? 'text-emerald-600' : (estado === 'Reprobado' ? 'text-rose-600' : 'text-amber-600');
+  const colorBadge = estado === 'Aprobado' ? 'bg-emerald-100 text-emerald-800' : (estado === 'Reprobado' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800');
+  spanFinal.className = `nota-final-span font-bold ${colorTexto}`;
+  spanBadge.className = `estado-badge-span px-2 py-0.5 rounded-full text-[10px] font-bold ${colorBadge}`;
 }
 
 async function guardarActaNotas() {
@@ -2153,23 +2154,26 @@ async function guardarActaNotas() {
   filas.forEach(fila => {
     const matricula = fila.getAttribute('data-matricula');
     if (!matricula) return;
-    const ac1 = parseInt(fila.querySelector('[data-campo="ac1"]').value) || 0;
-    const ac2 = parseInt(fila.querySelector('[data-campo="ac2"]').value) || 0;
-    const ac3 = parseInt(fila.querySelector('[data-campo="ac3"]').value) || 0;
-    const fin = parseInt(fila.querySelector('[data-campo="final"]').value) || 0;
-    if (ac1 < 0 || ac1 > 100 || ac2 < 0 || ac2 > 100 || ac3 < 0 || ac3 > 100 || fin < 0 || fin > 100) {
+    const ac1 = fila.querySelector('[data-campo="ac1"]').value;
+    const ac2 = fila.querySelector('[data-campo="ac2"]').value;
+    const ac3 = fila.querySelector('[data-campo="ac3"]').value;
+    const fin = fila.querySelector('[data-campo="final"]').value;
+    // Vacío = "En Curso" (sin nota todavía), no es un valor fuera de rango.
+    const fueraDeRango = [ac1, ac2, ac3, fin].some(v => v !== '' && (Number(v) < 0 || Number(v) > 100));
+    if (fueraDeRango) {
       errorRango = true;
       return;
     }
-    const promedio = (ac1 + ac2 + ac3 + fin) / 4;
-    const { literal, estado } = calcularLiteralYEstado(promedio);
+    const { literal, estado, notaFinal } = calcularLiteralYEstado(ac1, ac2, ac3, fin);
     notas.push({
       idEstudiante: matricula,
       idAsignatura: codAsig,
       idSeccion: idSeccionSel,
-      acum1: ac1, acum2: ac2, acum3: ac3,
-      evalFinal: fin,
-      notaFinal: promedio,
+      acum1: ac1 === '' ? null : Number(ac1),
+      acum2: ac2 === '' ? null : Number(ac2),
+      acum3: ac3 === '' ? null : Number(ac3),
+      evalFinal: fin === '' ? null : Number(fin),
+      notaFinal,
       literal, estado
     });
   });
@@ -2593,6 +2597,7 @@ async function cargarBoletinEstudiante() {
     // Antes hacía lookup por est.carrera (campo inexistente) y mostraba vacío.
     const carreraNombre = est.carreraNombre || est.carreraCodigo || '— sin carrera —';
     const indice = calcularIndiceEstudiante(est.matricula, notas, asignaturas);
+    window._rpt01Data = { est, notas, asignaturas, indice, carreraNombre };
 
     let listadoNotasHTML = '';
     if (notas.length === 0) {
@@ -2605,9 +2610,9 @@ async function cargarBoletinEstudiante() {
             <td class="p-3 font-mono font-bold text-slate-700">${asig.codigo}</td>
             <td class="p-3 text-slate-800 font-bold">${asig.nombre}</td>
             <td class="p-3 text-center text-slate-500 font-mono">${asig.creditos}</td>
-            <td class="p-3 text-center font-semibold text-slate-500 font-mono">${n.notaFinal.toFixed(1)}</td>
+            <td class="p-3 text-center font-semibold text-slate-500 font-mono">${n.notaFinal === null || n.notaFinal === undefined ? '—' : n.notaFinal.toFixed(1)}</td>
             <td class="p-3 text-center font-bold text-slate-850 font-title">${n.literal}</td>
-            <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${n.estado === 'Aprobado' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${n.estado || '-'}</span></td>
+            <td class="p-3 text-center"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${n.estado === 'Aprobado' ? 'bg-emerald-100 text-emerald-800' : (n.estado === 'Reprobado' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}">${n.estado || '-'}</span></td>
           </tr>
         `;
       }).join('');
@@ -2648,7 +2653,7 @@ async function cargarBoletinEstudiante() {
             <div class="text-[10px] text-slate-400 font-title font-bold">taskUni · Universidad Nacional Pedro Henríquez Ureña</div>
             <div class="flex gap-2 no-print">
               <button onclick="window.print()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow font-title">[ GENERAR PDF ]</button>
-              <button onclick="exportarJSONBoletin()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow font-title">[ EXPORTAR JSON ]</button>
+              <button onclick="exportarExcelBoletin()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow font-title">[ EXPORTAR EXCEL ]</button>
             </div>
           </div>
         </div>
@@ -2659,9 +2664,22 @@ async function cargarBoletinEstudiante() {
   }
 }
 
-function exportarJSONBoletin() {
-  // Función similar a la original pero sin localStorage
-  showToast('Función de exportación JSON activa, pero los datos se obtienen de la API.', 'success');
+function exportarExcelBoletin() {
+  const datos = window._rpt01Data;
+  if (!datos) {
+    showToast('Genera el boletín antes de exportar.', 'error');
+    return;
+  }
+  const { est, notas, asignaturas, indice, carreraNombre } = datos;
+  let csv = `Matricula,Nombre,Carrera,Indice Acumulado\n`;
+  csv += `${est.matricula},"${est.nombre}","${carreraNombre}",${indice.toFixed(2)}\n\n`;
+  csv += `Codigo,Asignatura,Creditos,Nota Final,Literal,Estado\n`;
+  notas.forEach(n => {
+    const asig = asignaturas.find(a => a.id_asignatura === n.idAsignatura) || { codigo: n.idAsignatura, nombre: n.nombreAsignatura || n.idAsignatura, creditos: 0 };
+    const notaFinal = n.notaFinal === null || n.notaFinal === undefined ? '' : n.notaFinal.toFixed(1);
+    csv += `${asig.codigo},"${asig.nombre}",${asig.creditos},${notaFinal},${n.literal},${n.estado || ''}\n`;
+  });
+  downloadCSV(`boletin_${est.matricula}.csv`, csv);
 }
 
 // ============================================================
@@ -2707,6 +2725,10 @@ async function renderRPT04() {
     notas.forEach(nota => {
       if (misMatriculas && !misMatriculas.has(nota.matriculaEstudiante)) return;
       if (matriculaPropia && nota.matriculaEstudiante !== matriculaPropia) return;
+      // Una materia "En Curso" (notaFinal null) todavía no tiene promedio: en
+      // JS `null < umbralRiesgo` da true (null se coerciona a 0), lo que
+      // generaba una falsa alerta de riesgo para materias sin notas cargadas.
+      if (nota.notaFinal === null || nota.notaFinal === undefined) return;
       if (nota.notaFinal < umbralRiesgo) {
         const est = estudiantes.find(e => e.matricula === nota.matriculaEstudiante);
         const asig = asignaturas.find(a => a.id_asignatura === nota.idAsignatura);
@@ -3201,10 +3223,15 @@ async function renderRPT11() {
       ? { idProfesor: currentUser.idReferencia }
       : {};
 
-    const [asignaturas, profesores] = await Promise.all([
+    const [asignaturas, profesores, carreras] = await Promise.all([
       apiClient.getAsignaturas(filtrosAsig),
-      apiClient.getProfesores()
+      apiClient.getProfesores(),
+      esMaestro ? Promise.resolve([]) : apiClient.getCarreras()
     ]);
+
+    // Guardamos en el módulo para que el listener de "cambiar carrera" pueda
+    // volver a pintar la tabla sin refetch.
+    window._rpt11Data = { asignaturas, profesores, esMaestro };
 
     const totalAsig = asignaturas.length;
     const activas = asignaturas.filter(a => a.estado === 'Activa').length;
@@ -3221,17 +3248,29 @@ async function renderRPT11() {
     // las suyas, y la columna no aporta información nueva.
     const columnaProfesorHeader = esMaestro ? '' : '<th class="p-3">Profesor</th>';
 
+    // Admin: primero elige la carrera y ahí se desglosan sus materias, en vez
+    // de arrancar con el listado plano de toda la universidad. El maestro no
+    // tiene este selector (ya ve solo sus propias materias).
+    const selectorCarreraHTML = esMaestro ? '' : `
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Carrera</label>
+        <select id="rpt11-select-carrera" onchange="actualizarTablaRPT11FiltradaPorCarrera()" class="w-full sm:w-72 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500">
+          <option value="">Selecciona una carrera...</option>
+          ${carreras.map(c => `<option value="${c.id_carrera}">${c.nombre}</option>`).join('')}
+        </select>
+      </div>`;
+
     contenedor.innerHTML = `
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
         ${contadoresHTML}
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-100">
           <h3 class="font-title text-md font-bold text-slate-800">${esMaestro ? 'Asignaturas a mi cargo' : 'Listado General'}</h3>
           <div class="flex flex-wrap gap-2 w-full sm:w-auto">
-            <button onclick="filtrarAsignaturasPrompt()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow transition font-title">[ FILTRAR ]</button>
             <button onclick="window.print()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow transition font-title">[ EXPORTAR PDF ]</button>
             <button onclick="exportarExcelAsignaturas()" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow transition font-title">[ EXPORTAR EXCEL ]</button>
           </div>
         </div>
+        ${selectorCarreraHTML}
         <div class="overflow-x-auto">
           <table class="w-full text-left text-xs border-collapse">
             <thead>
@@ -3249,10 +3288,32 @@ async function renderRPT11() {
       </div>
     `;
 
-    actualizarTablaRPT11(asignaturas, profesores, esMaestro);
+    if (esMaestro) {
+      actualizarTablaRPT11(asignaturas, profesores, esMaestro);
+    } else {
+      actualizarTablaRPT11FiltradaPorCarrera();
+    }
   } catch (error) {
     showToast('Error al cargar asignaturas: ' + error.message, 'error');
   }
+}
+
+// Para admin: repinta la tabla de RPT-11 según la carrera elegida en el
+// selector. Sin carrera seleccionada se muestra un mensaje en vez del
+// listado completo, para que la vista arranque desglosada por carrera y no
+// como un listado plano de toda la universidad.
+function actualizarTablaRPT11FiltradaPorCarrera() {
+  const { asignaturas, profesores, esMaestro } = window._rpt11Data || {};
+  if (!asignaturas) return;
+  const select = document.getElementById('rpt11-select-carrera');
+  const idCarrera = select ? select.value : '';
+  if (!idCarrera) {
+    const tbody = document.getElementById('tbl-rpt11');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">Selecciona una carrera para ver sus materias.</td></tr>`;
+    return;
+  }
+  const delaCarrera = asignaturas.filter(a => String(a.id_carrera) === String(idCarrera));
+  actualizarTablaRPT11(delaCarrera, profesores, esMaestro);
 }
 
 function actualizarTablaRPT11(asignaturas, profesores, esMaestro = false, filtro = '') {
@@ -3284,14 +3345,6 @@ function actualizarTablaRPT11(asignaturas, profesores, esMaestro = false, filtro
       </tr>
     `;
   }).join('');
-}
-
-function filtrarAsignaturasPrompt() {
-  const q = prompt('Ingrese término de filtro para asignaturas (Código o Nombre):');
-  if (q !== null) {
-    // Recargar la vista con el filtro (se puede mejorar)
-    renderRPT11();
-  }
 }
 
 function exportarExcelAsignaturas() {
@@ -3425,6 +3478,11 @@ async function cargarPensumEstudiante() {
           stateLabel = 'Aprobada';
           creditosAprobados += asig.creditos;
           notaFinalHTML = `<span class="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">Nota: ${nota.notaFinal.toFixed(0)} (${nota.literal})</span>`;
+        } else if (nota.estado === 'En Curso') {
+          stateColor = 'bg-amber-50/70 border-amber-200 text-amber-800';
+          stateLabel = 'En Curso';
+          creditosPendientes += asig.creditos;
+          notaFinalHTML = `<span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded">En Curso</span>`;
         } else {
           stateColor = 'bg-rose-50/70 border-rose-200 text-rose-800';
           stateLabel = 'Reprobada';
@@ -3482,7 +3540,6 @@ async function cargarPensumEstudiante() {
           <div class="flex flex-col gap-2 pt-4 border-t border-slate-100 no-print">
             <button onclick="window.print()" class="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow transition font-title">[ GENERAR PDF ]</button>
             <button onclick="exportarExcelPensum()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow transition font-title">[ EXPORTAR EXCEL ]</button>
-            <button onclick="alert('Mostrando pensum completo oficial de la Universidad Nacional Pedro Henríquez Ureña.')" class="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition font-title">[ VER PENSUM COMPLETO ]</button>
           </div>
         </div>
         <div class="lg:col-span-2 space-y-6">
@@ -3590,18 +3647,23 @@ async function cargarIndiceYSituacionEstudiante() {
     } else {
       detalleFilasHTML = notas.map(n => {
         const asig = asignaturas.find(a => a.id_asignatura === n.idAsignatura) || { codigo: n.idAsignatura, nombre: n.nombreAsignatura || n.idAsignatura, creditos: 0 };
-        const pts = literalAPuntos(n.literal);
-        const ptsCr = pts * asig.creditos;
-        totalPtsHonor += ptsCr;
-        totalCreditosConNota += asig.creditos;
+        // Las materias "En Curso" (EC) se muestran en el detalle pero no
+        // suman puntos ni créditos al índice: todavía no tienen nota final.
+        const esEnCurso = n.literal === 'EC';
+        const pts = esEnCurso ? 0 : literalAPuntos(n.literal);
+        const ptsCr = esEnCurso ? 0 : pts * asig.creditos;
+        if (!esEnCurso) {
+          totalPtsHonor += ptsCr;
+          totalCreditosConNota += asig.creditos;
+        }
         return `
           <tr class="border-b border-slate-100 text-xs hover:bg-slate-50 transition">
             <td class="p-3 font-mono font-bold text-slate-700">${asig.codigo}</td>
             <td class="p-3 text-slate-800 font-bold">${asig.nombre}</td>
             <td class="p-3 text-center font-bold text-slate-500 font-mono">${asig.creditos}</td>
             <td class="p-3 text-center text-slate-800 font-bold font-title">${n.literal}</td>
-            <td class="p-3 text-center font-bold text-slate-500 font-mono">${pts.toFixed(1)}</td>
-            <td class="p-3 text-center font-extrabold text-emerald-600 font-mono">${ptsCr.toFixed(1)}</td>
+            <td class="p-3 text-center font-bold text-slate-500 font-mono">${esEnCurso ? '—' : pts.toFixed(1)}</td>
+            <td class="p-3 text-center font-extrabold text-emerald-600 font-mono">${esEnCurso ? '—' : ptsCr.toFixed(1)}</td>
           </tr>
         `;
       }).join('');
@@ -3740,6 +3802,112 @@ function actualizarCalculoSimulado() {
 }
 
 // ============================================================
+// 14. RPT-14 · BITÁCORA DE MANTENIMIENTO DE PENSUM (solo admin)
+// ============================================================
+async function renderRPT14() {
+  tituloModulo.textContent = 'RPT-14 · Bitácora de Mantenimiento de Pensum';
+  contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 text-sm">Cargando bitácora...</div>`;
+
+  try {
+    const registros = await apiClient.getMantenimientoPensum();
+
+    const filasHTML = (registros && registros.length > 0)
+      ? registros.map(r => `
+          <tr class="border-b border-slate-100 text-xs hover:bg-slate-50 transition">
+            <td class="p-3 font-mono text-slate-500">${new Date(r.fecha_cambio).toLocaleString()}</td>
+            <td class="p-3">
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${r.tipo_cambio === 'Agregar' ? 'bg-emerald-100 text-emerald-800' : (r.tipo_cambio === 'Quitar' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}">${r.tipo_cambio}</span>
+            </td>
+            <td class="p-3 font-mono font-bold text-slate-700">${r.codigo_asignatura}</td>
+            <td class="p-3 text-slate-800">${r.nombre_asignatura}</td>
+            <td class="p-3 text-slate-600">${r.nombre_carrera || '-'}</td>
+            <td class="p-3 text-slate-500">${r.usuario || '-'}</td>
+            <td class="p-3 text-slate-500">${r.descripcion || '-'}</td>
+          </tr>
+        `).join('')
+      : `<tr><td colspan="7" class="p-4 text-center text-slate-400 italic">No hay cambios registrados todavía.</td></tr>`;
+
+    contenedor.innerHTML = `
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
+        <h3 class="font-title text-md font-bold text-slate-800 pb-4 border-b border-slate-100">Historial de cambios de pensum</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
+                <th class="p-3">Fecha</th>
+                <th class="p-3">Tipo de Cambio</th>
+                <th class="p-3">Asignatura</th>
+                <th class="p-3">Nombre</th>
+                <th class="p-3">Carrera</th>
+                <th class="p-3">Usuario</th>
+                <th class="p-3">Descripción</th>
+              </tr>
+            </thead>
+            <tbody>${filasHTML}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    showToast('Error al cargar la bitácora de pensum: ' + error.message, 'error');
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-rose-100 shadow-sm text-center text-rose-500 text-sm">No se pudo cargar la bitácora. ¿Corriste sql/mantenimiento_pensum.sql en la base de datos?</div>`;
+  }
+}
+
+// ============================================================
+// 15. RPT-15 · BITÁCORA DE ACTIVIDAD (dbo.Log, solo admin)
+// ============================================================
+async function renderRPT15() {
+  tituloModulo.textContent = 'RPT-15 · Bitácora de Actividad';
+  contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 text-sm">Cargando bitácora...</div>`;
+
+  try {
+    const registros = await apiClient.getLogs();
+
+    const filasHTML = (registros && registros.length > 0)
+      ? registros.map(r => `
+          <tr class="border-b border-slate-100 text-xs hover:bg-slate-50 transition">
+            <td class="p-3 font-mono text-slate-500">${new Date(r.fecha).toLocaleString()}</td>
+            <td class="p-3 text-slate-500">${r.usuario || '-'}</td>
+            <td class="p-3 font-mono font-bold text-slate-700">${r.entidad || r.tipo || '-'}</td>
+            <td class="p-3">
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                r.accion === 'CREATE' || r.accion === 'EXPORT' ? 'bg-emerald-100 text-emerald-800'
+                : r.accion === 'DELETE' ? 'bg-rose-100 text-rose-800'
+                : 'bg-amber-100 text-amber-800'
+              }">${r.accion || r.evento || '-'}</span>
+            </td>
+            <td class="p-3 text-slate-500">${r.descripcion || r.archivo || '-'}</td>
+          </tr>
+        `).join('')
+      : `<tr><td colspan="5" class="p-4 text-center text-slate-400 italic">No hay actividad registrada todavía.</td></tr>`;
+
+    contenedor.innerHTML = `
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
+        <h3 class="font-title text-md font-bold text-slate-800 pb-4 border-b border-slate-100">Historial de actividad del sistema</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
+                <th class="p-3">Fecha</th>
+                <th class="p-3">Usuario</th>
+                <th class="p-3">Entidad</th>
+                <th class="p-3">Acción</th>
+                <th class="p-3">Descripción</th>
+              </tr>
+            </thead>
+            <tbody>${filasHTML}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    showToast('Error al cargar la bitácora de actividad: ' + error.message, 'error');
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-rose-100 shadow-sm text-center text-rose-500 text-sm">No se pudo cargar la bitácora. ¿Corriste el ALTER TABLE Log?</div>`;
+  }
+}
+
+// ============================================================
 // GENERAR MENÚ LATERAL SEGÚN ROL
 // ============================================================
 function generarMenuLateral(rol) {
@@ -3768,7 +3936,9 @@ function generarMenuLateral(rol) {
       { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> RPT-13 · Índice Académico', action: 'rpt13' },
       { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> RPT-01 · Boletín Oficial', action: 'rpt01' },
       { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> RPT-06 · Conversión', action: 'rpt06' },
-      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Alertas', action: 'rpt07' }
+      { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> RPT-07 · Bitácora Alertas', action: 'rpt07' },
+      { id: 'rpt14', label: '<span class="material-symbols-outlined text-base">history</span> RPT-14 · Bitácora Pensum', action: 'rpt14' },
+      { id: 'rpt15', label: '<span class="material-symbols-outlined text-base">list_alt</span> RPT-15 · Bitácora Actividad', action: 'rpt15' }
     );
   } else if (rol === 'maestro') {
     items.push(
@@ -3825,9 +3995,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   currentUser = sesion;
-  document.getElementById('user-email').textContent = sesion.usuario;
   document.getElementById('user-role-badge').textContent = sesion.rol;
-  const userInitials = sesion.usuario.split('@')[0].substring(0, 2).toUpperCase();
+
+  // Mostrar el nombre real de la cuenta en vez del correo. Estudiante/maestro
+  // tienen su nombre en Estudiante/Profesor (buscado por correo); admin no
+  // tiene un perfil con nombre propio, así que se usa el usuario del correo.
+  let nombreMostrar = sesion.usuario.split('@')[0];
+  try {
+    if (sesion.rol === 'estudiante') {
+      const estudiantes = await apiClient.getEstudiantes();
+      const est = estudiantes.find(e => e.correo === sesion.usuario);
+      if (est) nombreMostrar = est.nombre;
+    } else if (sesion.rol === 'maestro') {
+      const profesores = await apiClient.getProfesores();
+      const prof = profesores.find(p => p.correo === sesion.usuario);
+      if (prof) nombreMostrar = prof.nombre;
+    } else {
+      nombreMostrar = nombreMostrar.charAt(0).toUpperCase() + nombreMostrar.slice(1);
+    }
+  } catch {
+    // Si falla la búsqueda, se queda con el username del correo como fallback.
+  }
+  currentUser.nombreMostrar = nombreMostrar;
+  document.getElementById('user-email').textContent = nombreMostrar;
+  const userInitials = nombreMostrar.trim().split(/\s+/).map(p => p[0]).join('').substring(0, 2).toUpperCase();
   document.getElementById('user-avatar').textContent = userInitials;
 
   // Período activo

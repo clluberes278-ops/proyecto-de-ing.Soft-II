@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, sql } = require('../db');
+const { registrarLog } = require('../log-helper');
 
 // ============================================================================
 // GET /api/facultades - Listar todas las facultades
@@ -32,6 +33,7 @@ router.get('/', async (req, res) => {
 // ============================================================================
 router.post('/', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { codigo, nombre, estado } = req.body;
 
         if (!codigo || !nombre) {
@@ -52,6 +54,11 @@ router.post('/', async (req, res) => {
                 VALUES (@codigo, @nombre, @estado)
             `);
 
+        await registrarLog(pool, sql, {
+            evento: 'FACULTAD_CREADA', usuario, entidad: 'Facultad', accion: 'CREATE',
+            descripcion: `Facultad ${codigo} (${nombre}) creada`
+        });
+
         res.status(201).json({ success: true, message: 'Facultad creada' });
     } catch (error) {
         // 2627 = violación de restricción UNIQUE (código de facultad repetido)
@@ -69,6 +76,7 @@ router.post('/', async (req, res) => {
 // ============================================================================
 router.put('/:id', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const { nombre, estado } = req.body;
 
@@ -88,6 +96,11 @@ router.put('/:id', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Facultad no encontrada' });
         }
 
+        await registrarLog(pool, sql, {
+            evento: 'FACULTAD_ACTUALIZADA', usuario, entidad: 'Facultad', accion: 'UPDATE',
+            descripcion: `Facultad id ${id} actualizada`
+        });
+
         res.json({ success: true, message: 'Facultad actualizada' });
     } catch (error) {
         console.error('Error en PUT /facultades:', error);
@@ -100,6 +113,7 @@ router.put('/:id', async (req, res) => {
 // ============================================================================
 router.delete('/:codigo', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { codigo } = req.params;
         const pool = await getConnection();
 
@@ -110,6 +124,11 @@ router.delete('/:codigo', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Facultad no encontrada' });
         }
+
+        await registrarLog(pool, sql, {
+            evento: 'FACULTAD_ELIMINADA', usuario, entidad: 'Facultad', accion: 'DELETE',
+            descripcion: `Facultad ${codigo} eliminada`
+        });
 
         res.json({ success: true, message: 'Facultad eliminada' });
     } catch (error) {

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, sql } = require('../db'); // ajusta la ruta a tu módulo de conexión
+const { registrarLog } = require('../log-helper');
 
 // ============================================================================
 // GET /api/configuracion - Obtener configuración (umbrales)
@@ -40,6 +41,7 @@ router.get('/', async (req, res) => {
 // ============================================================================
 router.put('/', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { riesgo, verde, amarillo } = req.body;
 
         if (verde === undefined || amarillo === undefined) {
@@ -71,6 +73,11 @@ router.put('/', async (req, res) => {
             .input('rojo', sql.VarChar(15), 'Automático');
 
         await request.query(query);
+
+        await registrarLog(pool, sql, {
+            evento: 'UMBRALES_ACTUALIZADOS', usuario, entidad: 'ConfiguracionUmbral', accion: 'UPDATE',
+            descripcion: `Umbrales actualizados: verde=${verde}, amarillo=${amarillo}, riesgo=${riesgo}`
+        });
 
         res.json({ success: true, message: 'Configuración actualizada' });
     } catch (error) {

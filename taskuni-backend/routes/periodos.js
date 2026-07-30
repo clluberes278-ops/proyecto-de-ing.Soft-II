@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, sql } = require('../db');
+const { registrarLog } = require('../log-helper');
 
 // ============================================================================
 // GET /api/periodos - Listar todos los periodos
@@ -45,6 +46,7 @@ router.get('/', async (req, res) => {
 // ============================================================================
 router.post('/', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { periodo, fechaInicio, fechaFin, estado } = req.body;
 
         if (!periodo || !fechaInicio || !fechaFin) {
@@ -74,6 +76,11 @@ router.post('/', async (req, res) => {
             .input('estado', sql.VarChar(15), estado || 'Activo')
             .query(query);
 
+        await registrarLog(pool, sql, {
+            evento: 'PERIODO_CREADO', usuario, entidad: 'Periodo', accion: 'CREATE',
+            descripcion: `Periodo ${periodo} creado`
+        });
+
         res.json({ success: true, id_periodo: result.recordset[0].id_periodo });
     } catch (error) {
         console.error('Error en POST /periodos:', error);
@@ -87,6 +94,7 @@ router.post('/', async (req, res) => {
 // ============================================================================
 router.put('/:id', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const { periodo, fechaInicio, fechaFin, estado } = req.body;
 
@@ -127,6 +135,11 @@ router.put('/:id', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Periodo no encontrado' });
         }
 
+        await registrarLog(pool, sql, {
+            evento: 'PERIODO_ACTUALIZADO', usuario, entidad: 'Periodo', accion: 'UPDATE',
+            descripcion: `Periodo id ${id} actualizado`
+        });
+
         res.json({ success: true, message: 'Periodo actualizado' });
     } catch (error) {
         console.error('Error en PUT /periodos/:id:', error);
@@ -139,6 +152,7 @@ router.put('/:id', async (req, res) => {
 // ============================================================================
 router.delete('/:id', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const pool = await getConnection();
 
@@ -149,6 +163,11 @@ router.delete('/:id', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Periodo no encontrado' });
         }
+
+        await registrarLog(pool, sql, {
+            evento: 'PERIODO_ELIMINADO', usuario, entidad: 'Periodo', accion: 'DELETE',
+            descripcion: `Periodo id ${id} eliminado`
+        });
 
         res.json({ success: true, message: 'Periodo eliminado' });
     } catch (error) {

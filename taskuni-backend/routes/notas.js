@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, sql } = require('../db');
+const { registrarLog } = require('../log-helper');
 
 // ============================================================================
 // Helper: resolver id_estudiante a partir de matricula o id numérico
@@ -119,6 +120,7 @@ router.get('/', async (req, res) => {
 // ============================================================================
 router.post('/', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { notas } = req.body;
 
         if (!Array.isArray(notas) || notas.length === 0) {
@@ -179,6 +181,14 @@ router.post('/', async (req, res) => {
             `);
             guardadas++;
         }
+
+        // Un solo registro por guardado de acta (no uno por estudiante), para
+        // no inundar la bitácora en cada carga masiva.
+        await registrarLog(pool, sql, {
+            evento: 'NOTAS_GUARDADAS', usuario, entidad: 'Nota', accion: 'CREATE_UPDATE',
+            registros: guardadas,
+            descripcion: `${guardadas} nota(s) guardada(s) en acta`
+        });
 
         res.json({ success: true, message: `${guardadas} nota(s) guardada(s)` });
     } catch (error) {

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, sql } = require('../db');
+const { registrarLog } = require('../log-helper');
 
 // ============================================================================
 // GET /api/carreras - Listar todas las carreras
@@ -34,6 +35,7 @@ router.get('/', async (req, res) => {
 // ============================================================================
 router.post('/', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { codigo, nombre, id_facultad, facultad, estado } = req.body;
 
         if (!codigo || !nombre) {
@@ -79,6 +81,11 @@ router.post('/', async (req, res) => {
                 VALUES (@codigo, @nombre, @facultadText, @id_facultad, @estado)
             `);
 
+        await registrarLog(pool, sql, {
+            evento: 'CARRERA_CREADA', usuario, entidad: 'Carrera', accion: 'CREATE',
+            descripcion: `Carrera ${codigo} (${nombre}) creada`
+        });
+
         res.status(201).json({ success: true, message: 'Carrera creada' });
     } catch (error) {
         if (error.number === 2627) {
@@ -94,6 +101,7 @@ router.post('/', async (req, res) => {
 // ============================================================================
 router.put('/:id', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const { nombre, id_facultad, facultad, estado } = req.body;
 
@@ -138,6 +146,11 @@ router.put('/:id', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Carrera no encontrada' });
         }
 
+        await registrarLog(pool, sql, {
+            evento: 'CARRERA_ACTUALIZADA', usuario, entidad: 'Carrera', accion: 'UPDATE',
+            descripcion: `Carrera id ${id} actualizada`
+        });
+
         res.json({ success: true, message: 'Carrera actualizada' });
     } catch (error) {
         console.error('Error en PUT /carreras:', error);
@@ -150,6 +163,7 @@ router.put('/:id', async (req, res) => {
 // ============================================================================
 router.delete('/:codigo', async (req, res) => {
     try {
+        const usuario = req.headers['x-usuario'] || null;
         const { codigo } = req.params;
         const pool = await getConnection();
 
@@ -191,6 +205,11 @@ router.delete('/:codigo', async (req, res) => {
         await pool.request()
             .input('codigo', sql.VarChar(20), codigo)
             .query('DELETE FROM Carrera WHERE codigo_carrera = @codigo');
+
+        await registrarLog(pool, sql, {
+            evento: 'CARRERA_ELIMINADA', usuario, entidad: 'Carrera', accion: 'DELETE',
+            descripcion: `Carrera ${codigo} eliminada`
+        });
 
         res.json({ success: true, message: 'Carrera eliminada' });
     } catch (error) {

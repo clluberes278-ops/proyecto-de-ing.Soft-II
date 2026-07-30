@@ -24,10 +24,14 @@ const facultadesRouter = require('./routes/facultades');
 const seccionesEstudiantesRouter = require('./routes/secciones-estudiantes');   // NUEVO
 const carrerasRouter = require('./routes/carreras'); // NUEVO
 const mailRouter = require('./routes/mail'); // NUEVO
+const mantenimientoPensumRouter = require('./routes/mantenimiento-pensum'); // NUEVO
 
 // Envío de correo para las alertas de RPT-04. Si el .env no trae credenciales
 // SMTP, el módulo entra en modo simulación en vez de romper el endpoint.
 const mailer = require('./mailer');
+
+// Bitácora de actividad (dbo.Log): CRUD + import/export, ver log-helper.js.
+const { registrarLog } = require('./log-helper');
 // ============================================================================
 // MIDDLEWARE
 // ============================================================================
@@ -35,7 +39,7 @@ const mailer = require('./mailer');
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Usuario');
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
@@ -96,6 +100,7 @@ app.use('/api/facultades', facultadesRouter);
 app.use('/api/secciones', seccionesEstudiantesRouter);
 app.use('/api/carreras', carrerasRouter); // NUEVO
 app.use('/api/mail', mailRouter); // NUEVO
+app.use('/api/mantenimiento-pensum', mantenimientoPensumRouter); // NUEVO
 // ============================================================================
 // ============================================================================
 // ENDPOINTS DE AUTENTICACIÓN
@@ -143,6 +148,7 @@ app.post('/api/login', async (req, res) => {
 // Crear cuenta (uso administrativo: el panel de admin la usa para dar de alta usuarios)
 app.post('/api/usuarios', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { correo, password, rol, idReferencia } = req.body;
         if (!correo || !password || !rol) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos (correo, password, rol)' });
@@ -165,6 +171,11 @@ app.post('/api/usuarios', async (req, res) => {
                 INSERT INTO Usuario (correo, password_hash, rol, id_referencia, estado)
                 VALUES (@correo, @hash, @rol, @idReferencia, 'Activo')
             `);
+
+        await registrarLog(pool, mssql, {
+            evento: 'USUARIO_CREADO', usuario: usuarioActor, entidad: 'Usuario', accion: 'CREATE',
+            descripcion: `Cuenta ${correo} creada con rol ${rol}`
+        });
 
         res.status(201).json({ success: true, message: 'Cuenta creada' });
     } catch (error) {
@@ -254,6 +265,7 @@ app.get('/api/estudiantes/:id', async (req, res) => {
 // Si crearCuenta=true, todo se hace en una transacción: si algo falla, no se guarda nada.
 app.post('/api/estudiantes', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { matricula, nombre, correo, id_carrera, estado, crearCuenta, password } = req.body;
 
         if (!matricula || !nombre || !id_carrera) {
@@ -337,6 +349,11 @@ app.post('/api/estudiantes', async (req, res) => {
             throw e;
         }
 
+        await registrarLog(pool, mssql, {
+            evento: 'ESTUDIANTE_CREADO', usuario: usuarioActor, entidad: 'Estudiante', accion: 'CREATE',
+            descripcion: `Estudiante ${matricula} (${nombre}) creado`
+        });
+
         res.status(201).json({
             success: true,
             message: crearCuenta
@@ -354,6 +371,7 @@ app.post('/api/estudiantes', async (req, res) => {
 // PUT /api/estudiantes/:id (actualizar por id numérico)
 app.put('/api/estudiantes/:id', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const { nombre, correo, estado } = req.body;
 
@@ -371,6 +389,12 @@ app.put('/api/estudiantes/:id', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Estudiante no encontrado' });
         }
+
+        await registrarLog(pool, mssql, {
+            evento: 'ESTUDIANTE_ACTUALIZADO', usuario: usuarioActor, entidad: 'Estudiante', accion: 'UPDATE',
+            descripcion: `Estudiante id ${id} actualizado`
+        });
+
         res.json({ success: true, message: 'Estudiante actualizado' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -380,6 +404,7 @@ app.put('/api/estudiantes/:id', async (req, res) => {
 // DELETE /api/estudiantes/matricula/:matricula (eliminar por matrícula)
 app.delete('/api/estudiantes/matricula/:matricula', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { matricula } = req.params;
         const result = await pool.request()
             .input('matricula', mssql.VarChar(20), matricula)
@@ -388,6 +413,12 @@ app.delete('/api/estudiantes/matricula/:matricula', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Estudiante no encontrado' });
         }
+
+        await registrarLog(pool, mssql, {
+            evento: 'ESTUDIANTE_ELIMINADO', usuario: usuarioActor, entidad: 'Estudiante', accion: 'DELETE',
+            descripcion: `Estudiante ${matricula} eliminado`
+        });
+
         res.json({ success: true, message: 'Estudiante eliminado' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -471,9 +502,31 @@ app.get('/api/asignaturas', async (req, res) => {
     }
 });
 
+// Bitácora de MantenimientoPensum (tabla del diagrama ER): registra cada vez
+// que cambia Asignatura.id_pensum (agregar/quitar/actualizar). Se traga sus
+// propios errores para no romper el flujo de crear/editar asignaturas si el
+// script sql/mantenimiento_pensum.sql todavía no corrió contra la BD.
+async function registrarMantenimientoPensum(idPensum, idAsignatura, tipoCambio, descripcion, usuario) {
+    try {
+        await pool.request()
+            .input('id_pensum', mssql.Int, idPensum)
+            .input('id_asignatura', mssql.Int, idAsignatura)
+            .input('tipo_cambio', mssql.VarChar(30), tipoCambio)
+            .input('descripcion', mssql.VarChar(100), descripcion)
+            .input('usuario', mssql.VarChar(30), usuario || null)
+            .query(`
+                INSERT INTO MantenimientoPensum (id_pensum, id_asignatura, tipo_cambio, descripcion, usuario)
+                VALUES (@id_pensum, @id_asignatura, @tipo_cambio, @descripcion, @usuario)
+            `);
+    } catch (error) {
+        console.warn('[MantenimientoPensum] No se pudo registrar el cambio (¿corriste sql/mantenimiento_pensum.sql?):', error.message);
+    }
+}
+
 app.post('/api/asignaturas', async (req, res) => {
     try {
-        const { codigo, nombre, creditos, estado, id_profesor, id_pensum, id_carrera } = req.body;
+        const { codigo, nombre, creditos, estado, id_profesor, id_pensum, id_carrera, usuario: usuarioBody } = req.body;
+        const usuario = usuarioBody || req.headers['x-usuario'] || null;
         if (!codigo || !nombre || !creditos) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
         }
@@ -507,8 +560,26 @@ app.post('/api/asignaturas', async (req, res) => {
             .input('id_pensum', mssql.Int, targetPensumId)
             .query(`
                 INSERT INTO Asignatura (codigo_asignatura, nombre_asignatura, creditos, estado, id_profesor, id_pensum)
+                OUTPUT INSERTED.id_asignatura
                 VALUES (@codigo, @nombre, @creditos, @estado, @id_profesor, @id_pensum)
             `);
+
+        if (targetPensumId) {
+            const nuevoIdAsignatura = result.recordset[0].id_asignatura;
+            await registrarMantenimientoPensum(
+                targetPensumId,
+                nuevoIdAsignatura,
+                'Agregar',
+                `Asignatura ${codigo} agregada al pensum`,
+                usuario
+            );
+        }
+
+        await registrarLog(pool, mssql, {
+            evento: 'ASIGNATURA_CREADA', usuario, entidad: 'Asignatura', accion: 'CREATE',
+            descripcion: `Asignatura ${codigo} (${nombre}) creada`
+        });
+
         res.status(201).json({ success: true, message: 'Asignatura creada' });
     } catch (error) {
         if (error.number === 2627) {
@@ -521,11 +592,24 @@ app.post('/api/asignaturas', async (req, res) => {
 app.put('/api/asignaturas/:codigo', async (req, res) => {
     try {
         const { codigo } = req.params;
-        const { nombre, creditos, estado, id_profesor, id_pensum, id_carrera } = req.body;
+        const { nombre, creditos, estado, id_profesor, id_pensum, id_carrera, usuario: usuarioBody } = req.body;
+        const usuario = usuarioBody || req.headers['x-usuario'] || null;
 
         if (!nombre || !creditos) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
         }
+
+        // Capturamos el id_pensum previo para saber si esta edición
+        // agrega/quita/actualiza la asignatura de un pensum (bitácora).
+        const previaResult = await pool.request()
+            .input('codigo', mssql.VarChar(20), codigo)
+            .query('SELECT id_asignatura, id_pensum FROM Asignatura WHERE codigo_asignatura = @codigo');
+
+        if (previaResult.recordset.length === 0) {
+            return res.status(404).json({ success: false, error: 'Asignatura no encontrada' });
+        }
+        const idAsignatura = previaResult.recordset[0].id_asignatura;
+        const idPensumPrevio = previaResult.recordset[0].id_pensum;
 
         let targetPensumId = id_pensum || null;
 
@@ -565,6 +649,32 @@ app.put('/api/asignaturas/:codigo', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Asignatura no encontrada' });
         }
+
+        const pensumViejo = idPensumPrevio || null;
+        const pensumNuevo = targetPensumId || null;
+        if (pensumViejo !== pensumNuevo) {
+            let tipoCambio, descripcion, idPensumParaLog;
+            if (!pensumViejo && pensumNuevo) {
+                tipoCambio = 'Agregar';
+                descripcion = `Asignatura ${codigo} agregada al pensum`;
+                idPensumParaLog = pensumNuevo;
+            } else if (pensumViejo && !pensumNuevo) {
+                tipoCambio = 'Quitar';
+                descripcion = `Asignatura ${codigo} quitada del pensum`;
+                idPensumParaLog = pensumViejo;
+            } else {
+                tipoCambio = 'Actualizar';
+                descripcion = `Asignatura ${codigo} movida a otro pensum`;
+                idPensumParaLog = pensumNuevo;
+            }
+            await registrarMantenimientoPensum(idPensumParaLog, idAsignatura, tipoCambio, descripcion, usuario);
+        }
+
+        await registrarLog(pool, mssql, {
+            evento: 'ASIGNATURA_ACTUALIZADA', usuario, entidad: 'Asignatura', accion: 'UPDATE',
+            descripcion: `Asignatura ${codigo} actualizada`
+        });
+
         res.json({ success: true, message: 'Asignatura actualizada' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -573,6 +683,7 @@ app.put('/api/asignaturas/:codigo', async (req, res) => {
 
 app.delete('/api/asignaturas/:codigo', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { codigo } = req.params;
         const result = await pool.request()
             .input('codigo', mssql.VarChar(20), codigo)
@@ -581,10 +692,16 @@ app.delete('/api/asignaturas/:codigo', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Asignatura no encontrada' });
         }
+
+        await registrarLog(pool, mssql, {
+            evento: 'ASIGNATURA_ELIMINADA', usuario: usuarioActor, entidad: 'Asignatura', accion: 'DELETE',
+            descripcion: `Asignatura ${codigo} eliminada`
+        });
+
         res.json({ success: true, message: 'Asignatura eliminada' });
     } catch (error) {
         if (error.number === 547) {
-            return res.status(409).json({ success: false, error: 'No se puede eliminar: esta asignatura tiene secciones o notas asociadas' });
+            return res.status(409).json({ success: false, error: 'No se puede eliminar: esta asignatura tiene secciones, notas o historial de pensum asociados' });
         }
         res.status(500).json({ success: false, error: error.message });
     }
@@ -697,6 +814,7 @@ app.get('/api/profesores', async (req, res) => {
 // Si crearCuenta=true, todo se hace en una transacción: si algo falla, no se guarda nada.
 app.post('/api/profesores', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { codigo, nombre, correo, telefono, estado, crearCuenta, password } = req.body;
         if (!codigo || !nombre) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos (codigo, nombre)' });
@@ -753,6 +871,11 @@ app.post('/api/profesores', async (req, res) => {
             throw e;
         }
 
+        await registrarLog(pool, mssql, {
+            evento: 'PROFESOR_CREADO', usuario: usuarioActor, entidad: 'Profesor', accion: 'CREATE',
+            descripcion: `Profesor ${codigo} (${nombre}) creado`
+        });
+
         res.status(201).json({
             success: true,
             message: crearCuenta
@@ -772,10 +895,17 @@ app.post('/api/profesores', async (req, res) => {
 
 app.delete('/api/profesores/:codigo', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { codigo } = req.params;
         await pool.request()
             .input('codigo', mssql.VarChar(20), codigo)
             .query('DELETE FROM Profesor WHERE codigo_profesor = @codigo');
+
+        await registrarLog(pool, mssql, {
+            evento: 'PROFESOR_ELIMINADO', usuario: usuarioActor, entidad: 'Profesor', accion: 'DELETE',
+            descripcion: `Profesor ${codigo} eliminado`
+        });
+
         res.json({ success: true, message: 'Profesor eliminado' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -824,6 +954,7 @@ app.get('/api/secciones', async (req, res) => {
 
 app.post('/api/secciones', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { numero, idAsignatura, idProfesor, periodo } = req.body;
         if (!numero || !idAsignatura || !periodo) {
             return res.status(400).json({ success: false, error: 'Faltan campos requeridos' });
@@ -878,6 +1009,12 @@ app.post('/api/secciones', async (req, res) => {
                 INSERT INTO Seccion (numero_seccion, id_asignatura, id_profesor, id_periodo, estado)
                 VALUES (@numero, @idAsignatura, @idProfesor, @idPeriodo, @estado)
             `);
+
+        await registrarLog(pool, mssql, {
+            evento: 'SECCION_CREADA', usuario: usuarioActor, entidad: 'Seccion', accion: 'CREATE',
+            descripcion: `Sección ${numero} creada para asignatura ${idAsignatura} (periodo ${periodo})`
+        });
+
         res.status(201).json({ success: true, message: 'Sección creada' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -886,6 +1023,7 @@ app.post('/api/secciones', async (req, res) => {
 
 app.put('/api/secciones/:id', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const { numero, idAsignatura, idProfesor, periodo } = req.body;
         if (!numero || !idAsignatura || !periodo) {
@@ -946,6 +1084,12 @@ app.put('/api/secciones/:id', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Sección no encontrada' });
         }
+
+        await registrarLog(pool, mssql, {
+            evento: 'SECCION_ACTUALIZADA', usuario: usuarioActor, entidad: 'Seccion', accion: 'UPDATE',
+            descripcion: `Sección id ${id} actualizada`
+        });
+
         res.json({ success: true, message: 'Sección actualizada' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -954,6 +1098,7 @@ app.put('/api/secciones/:id', async (req, res) => {
 
 app.delete('/api/secciones/:id', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { id } = req.params;
         const result = await pool.request()
             .input('id', mssql.Int, id)
@@ -962,6 +1107,12 @@ app.delete('/api/secciones/:id', async (req, res) => {
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ success: false, error: 'Sección no encontrada' });
         }
+
+        await registrarLog(pool, mssql, {
+            evento: 'SECCION_ELIMINADA', usuario: usuarioActor, entidad: 'Seccion', accion: 'DELETE',
+            descripcion: `Sección id ${id} eliminada`
+        });
+
         res.json({ success: true, message: 'Sección eliminada' });
     } catch (error) {
         if (error.number === 547) {
@@ -1000,6 +1151,7 @@ app.get('/api/notificaciones', async (req, res) => {
 // el correo falla, para no perder el rastro de a quién falta avisarle.
 app.post('/api/notificaciones', async (req, res) => {
     try {
+        const usuarioActor = req.headers['x-usuario'] || null;
         const { notificaciones } = req.body; // Array
         if (!notificaciones || !Array.isArray(notificaciones) || notificaciones.length === 0) {
             return res.status(400).json({ success: false, error: 'Debe enviar un arreglo de notificaciones' });
@@ -1068,6 +1220,12 @@ app.post('/api/notificaciones', async (req, res) => {
             simuladas: contar('Simulada')
         };
 
+        await registrarLog(pool, mssql, {
+            evento: 'NOTIFICACIONES_ENVIADAS', usuario: usuarioActor, entidad: 'Notificacion', accion: 'CREATE',
+            registros: resultados.length,
+            descripcion: `${resultados.length} notificación(es) procesadas (${resumen.enviadas} enviadas, ${resumen.fallidas} fallidas, ${resumen.simuladas} simuladas)`
+        });
+
         res.json({
             success: true,
             message: `Registradas ${resultados.length} notificaciones`,
@@ -1088,10 +1246,14 @@ app.post('/api/notificaciones', async (req, res) => {
 app.get('/api/logs', async (req, res) => {
     try {
         const result = await pool.request().query(`
-            SELECT 
+            SELECT
                 id_log,
                 tipo,
                 evento,
+                usuario,
+                entidad,
+                accion,
+                descripcion,
                 periodo,
                 registros,
                 archivo,
@@ -1101,36 +1263,25 @@ app.get('/api/logs', async (req, res) => {
         `);
         res.json({ success: true, data: result.recordset });
     } catch (error) {
-        // La tabla Log no existe en el script de BD actual.
-        // Si quieres persistir logs en la BD, crea la tabla Log y este catch dejará de dispararse.
-        // Mientras tanto, no rompemos el dashboard: devolvemos vacío (el frontend ya usa localStorage como respaldo).
-        console.warn('[WARN] Tabla Log no encontrada, devolviendo lista vacía:', error.message);
+        // Tolera tanto la tabla Log ausente como las columnas nuevas
+        // (usuario/entidad/accion/descripcion) si el ALTER TABLE no ha corrido
+        // todavía. Mientras tanto, no rompemos el dashboard: devolvemos vacío.
+        console.warn('[WARN] No se pudo leer Log (¿existe la tabla y sus columnas nuevas?):', error.message);
         res.json({ success: true, data: [] });
     }
 });
 
 app.post('/api/logs', async (req, res) => {
     try {
-        const { tipo, evento, periodo, registros, archivo } = req.body;
-        if (!tipo || !evento) {
-            return res.status(400).json({ success: false, error: 'Faltan campos' });
+        const { tipo, evento, periodo, registros, archivo, entidad, accion, descripcion, usuario: usuarioBody } = req.body;
+        if (!evento) {
+            return res.status(400).json({ success: false, error: 'Falta el campo evento' });
         }
-        await pool.request()
-            .input('tipo', mssql.VarChar(20), tipo)
-            .input('evento', mssql.VarChar(50), evento)
-            .input('periodo', mssql.VarChar(20), periodo || '')
-            .input('registros', mssql.Int, registros || 0)
-            .input('archivo', mssql.VarChar(100), archivo || '')
-            .input('fecha', mssql.Date, new Date())
-            .query(`
-                INSERT INTO Log (tipo, evento, periodo, registros, archivo, fecha)
-                VALUES (@tipo, @evento, @periodo, @registros, @archivo, @fecha)
-            `);
+        const usuario = usuarioBody || req.headers['x-usuario'] || null;
+        await registrarLog(pool, mssql, { tipo, evento, usuario, entidad, accion, descripcion, periodo, registros, archivo });
         res.status(201).json({ success: true, message: 'Log registrado' });
     } catch (error) {
-        // Igual que en el GET: si la tabla Log no existe todavía, no tumbamos la petición.
-        console.warn('[WARN] No se pudo guardar el log en BD (existe la tabla Log?):', error.message);
-        res.status(200).json({ success: true, message: 'Log no persistido (tabla Log no existe aún)' });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
