@@ -505,7 +505,7 @@ app.get('/api/asignaturas', async (req, res) => {
 // Bitácora de MantenimientoPensum (tabla del diagrama ER): registra cada vez
 // que cambia Asignatura.id_pensum (agregar/quitar/actualizar). Se traga sus
 // propios errores para no romper el flujo de crear/editar asignaturas si el
-// script sql/mantenimiento_pensum.sql todavía no corrió contra la BD.
+// schema de sql/schema.sql todavía no corrió contra la BD.
 async function registrarMantenimientoPensum(idPensum, idAsignatura, tipoCambio, descripcion, usuario) {
     try {
         await pool.request()

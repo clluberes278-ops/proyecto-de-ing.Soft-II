@@ -18,6 +18,8 @@ async function resolverIdEstudiante(pool, valor) {
 // ============================================================================
 // Helper: resolver id_asignatura a partir de codigo_asignatura o id numérico
 // ============================================================================
+const LITERALES_VALIDOS = ['A', 'B', 'C', 'D', 'F', 'EC'];
+
 async function resolverIdAsignatura(pool, valor) {
     if (!isNaN(valor)) return Number(valor);
     const r = await pool.request()
@@ -148,6 +150,14 @@ router.post('/', async (req, res) => {
                 });
             }
 
+            const literal = (nota.literal || '').toUpperCase();
+            if (!LITERALES_VALIDOS.includes(literal)) {
+                return res.status(400).json({
+                    success: false,
+                    error: `nota_literal inválido (recibido: ${JSON.stringify(nota.literal)}). Valores permitidos: ${LITERALES_VALIDOS.join(', ')}`
+                });
+            }
+
             const request = pool.request()
                 .input('id_estudiante', sql.Int, idEstudiante)
                 .input('id_asignatura', sql.Int, idAsignatura)
@@ -157,7 +167,7 @@ router.post('/', async (req, res) => {
                 .input('acum3', sql.Decimal(5, 2), nota.acum3)
                 .input('eval_final', sql.Decimal(5, 2), nota.evalFinal)
                 .input('nota_final', sql.Decimal(5, 2), nota.notaFinal)
-                .input('nota_literal', sql.VarChar(2), nota.literal)
+                .input('nota_literal', sql.VarChar(2), literal)
                 .input('estado', sql.VarChar(15), nota.estado || 'Pendiente');
 
             await request.query(`
