@@ -41,7 +41,9 @@ ing.Soft II/
 │       ├── api-client.js         # Cliente HTTP (Fetch API)
 │       ├── app.js                # Registro y listado de estudiantes
 │       ├── core.js               # Lógica común (sidebar, toasts, exports)
-│       ├── dashboard.js          # Lógica del panel principal (módulos ENT/RPT)
+│       ├── dashboard-core.js     # Estado global, helpers, dispatcher renderView() y bootstrap
+│       ├── dashboard-ent.js      # Módulos ENT-01..ENT-11 (entradas/CRUD)
+│       ├── dashboard-rpt.js      # Módulos RPT-01..RPT-15 (reportes)
 │       ├── login.js              # Lógica legacy de login
 │       └── modules/
 │           ├── student.js        # Utilidades de estudiantes
