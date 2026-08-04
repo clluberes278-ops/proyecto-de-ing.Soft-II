@@ -1146,7 +1146,7 @@ app.get('/api/notificaciones', async (req, res) => {
 });
 
 // Crea notificaciones e intenta enviarlas por correo. El estado guardado
-// refleja el resultado real del envío ('Enviada' / 'Fallida' / 'Simulada'),
+// refleja el resultado real del envío ('Enviado' / 'Fallida' / 'Simulada'),
 // no un 'Enviado' optimista como antes. La fila se inserta SIEMPRE, incluso si
 // el correo falla, para no perder el rastro de a quién falta avisarle.
 app.post('/api/notificaciones', async (req, res) => {
@@ -1215,7 +1215,7 @@ app.post('/api/notificaciones', async (req, res) => {
 
         const contar = (e) => resultados.filter(r => r.estado === e).length;
         const resumen = {
-            enviadas: contar('Enviada'),
+            enviadas: contar('Enviado'),
             fallidas: contar('Fallida'),
             simuladas: contar('Simulada')
         };

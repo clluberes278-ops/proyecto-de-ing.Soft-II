@@ -66,8 +66,8 @@ const mailer = require('./mailer');
     console.log(`Estado: ${resultado.estado}`);
     console.log(`Detalle: ${resultado.detalle}`);
     console.log('');
-    if (resultado.estado === 'Enviada') {
+    if (resultado.estado === 'Enviado') {
         console.log('Revisa la bandeja de entrada (y la carpeta de spam).');
     }
-    process.exit(resultado.estado === 'Enviada' ? 0 : 1);
+    process.exit(resultado.estado === 'Enviado' ? 0 : 1);
 })();

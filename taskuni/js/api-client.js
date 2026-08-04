@@ -465,10 +465,13 @@ const apiClient = (() => {
 
     /**
      * Obtener configuración (umbrales)
+     * @param {string} [periodo] - Si se pasa, trae la config de ese período
+     *   (o la global si ese período aún no tiene una guardada).
      * @returns {Promise<Object>} { riesgo, verde, amarillo }
      */
-    async function getConfiguracion() {
-        const response = await makeRequest('/configuracion');
+    async function getConfiguracion(periodo) {
+        const query = periodo ? `?${new URLSearchParams({ periodo }).toString()}` : '';
+        const response = await makeRequest(`/configuracion${query}`);
         return response.data;
     }
 

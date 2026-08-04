@@ -96,7 +96,7 @@ async function verificarConexion() {
  * llamador necesita registrar la notificación en la bitácora pase lo que pase.
  *
  * @param {{para: string, asunto: string, mensaje: string}} datos
- * @returns {Promise<{estado: 'Enviada'|'Fallida'|'Simulada', detalle: string}>}
+ * @returns {Promise<{estado: 'Enviado'|'Fallida'|'Simulada', detalle: string}>}
  */
 async function enviarCorreo({ para, asunto, mensaje }) {
     if (!para || String(para).trim() === '') {
@@ -124,7 +124,7 @@ async function enviarCorreo({ para, asunto, mensaje }) {
             text: mensaje,
             html: plantillaHTML(asunto, mensaje)
         });
-        return { estado: 'Enviada', detalle: info.messageId || 'enviado' };
+        return { estado: 'Enviado', detalle: info.messageId || 'enviado' };
     } catch (error) {
         console.error(`[mailer] Error enviando a ${para}:`, error.message);
         return { estado: 'Fallida', detalle: error.message };

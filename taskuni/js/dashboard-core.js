@@ -197,7 +197,7 @@ const tituloModulo = document.getElementById('titulo-modulo');
 // módulos que el menú ya oculta pero que antes se podían renderizar igual.
 const VISTAS_POR_ROL = {
   admin: ['inicio', 'ent01', 'ent02', 'ent03', 'ent04', 'ent05', 'ent06', 'ent07', 'ent08', 'ent09', 'ent10',
-    'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt11', 'rpt12', 'rpt13', 'rpt15'],
+    'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt08', 'rpt11', 'rpt12', 'rpt13'],
   maestro: ['inicio', 'ent06', 'ent07', 'rpt04', 'rpt06', 'rpt07', 'rpt11'],
   estudiante: ['inicio', 'ent11', 'rpt01', 'rpt05', 'rpt06', 'rpt07', 'rpt12', 'rpt13']
 };
@@ -254,7 +254,7 @@ async function renderView(viewName) {
     case 'rpt11': await renderRPT11(); break;
     case 'rpt12': await renderRPT12(); break;
     case 'rpt13': await renderRPT13(); break;
-    case 'rpt15': await renderRPT15(); break;
+    case 'rpt08': await renderRPT08(); break;
     default: await renderInicio();
   }
   document.getElementById('print-area').scrollTop = 0;
@@ -275,11 +275,12 @@ async function renderInicio() {
     //    sobre el índice global, no sobre el rendimiento en una sola clase.
     //  - asignaturas: lo que se muestra en el contador "Materias Activas", que
     //    para el maestro sí se acota a las suyas.
+    const periodo = activeFilter.periodo || await getPeriodoActivo();
     const [estudiantes, asignaturasCatalogo, asignaturasPropias, config, notas, misMatriculas] = await Promise.all([
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
       esMaestro ? apiClient.getAsignaturas({ idProfesor: currentUser.idReferencia }) : Promise.resolve(null),
-      apiClient.getConfiguracion(),
+      apiClient.getConfiguracion(periodo),
       apiClient.getNotas(),
       esMaestro ? obtenerMatriculasEstudiantesDeMaestro() : Promise.resolve(null)
     ]);
@@ -494,14 +495,12 @@ function generarMenuLateral(rol) {
       { id: 'ent08', label: '<span class="material-symbols-outlined text-base">settings</span> Umbrales', action: 'ent08' },
       { header: 'Reportes e Indicadores' },
       { id: 'rpt11', label: '<span class="material-symbols-outlined text-base">library_books</span> Catálogo Materias', action: 'rpt11' },
-      { id: 'rpt05', label: '<span class="material-symbols-outlined text-base">traffic</span> Semáforo Riesgo', action: 'rpt05' },
-      { id: 'rpt04', label: '<span class="material-symbols-outlined text-base">warning</span> Alertas de Riesgo', action: 'rpt04' },
       { id: 'rpt12', label: '<span class="material-symbols-outlined text-base">donut_large</span> Estado Pensum', action: 'rpt12' },
       { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> Índice Académico', action: 'rpt13' },
       { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> Boletín Oficial', action: 'rpt01' },
       { id: 'rpt06', label: '<span class="material-symbols-outlined text-base">swap_horiz</span> Conversión', action: 'rpt06' },
       { id: 'rpt07', label: '<span class="material-symbols-outlined text-base">mail</span> Bitácora Alertas', action: 'rpt07' },
-      { id: 'rpt15', label: '<span class="material-symbols-outlined text-base">list_alt</span> Bitácora Actividad', action: 'rpt15' }
+      { id: 'rpt08', label: '<span class="material-symbols-outlined text-base">list_alt</span> Bitácora Actividad', action: 'rpt08' }
     );
   } else if (rol === 'maestro') {
     items.push(

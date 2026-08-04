@@ -1,9 +1,11 @@
 // ============================================================
 // dashboard-rpt.js
-// Módulos de reportes/indicadores RPT-01..RPT-15 (boletín,
-// alertas de riesgo, semáforo, tabla de conversión, catálogo,
-// bitácora de alertas, pensum, índice académico, bitácora de
-// actividad).
+// Módulos de reportes/indicadores RPT-01, RPT-04..RPT-08, RPT-11..RPT-13
+// (boletín, alertas de riesgo, semáforo, tabla de conversión, catálogo,
+// bitácora de alertas, pensum, índice académico, bitácora de actividad).
+// RPT-08 fue re-numerado: originalmente era "Bitácora de Actividad"
+// (RPT-15) — el RPT-08 original (Reporte de Importación/Exportación)
+// se eliminó por no aportar valor real, y esta bitácora tomó su número.
 // Requiere dashboard-core.js cargado antes (usa contenedor,
 // tituloModulo, currentUser, showToast, apiClient, etc.).
 // ============================================================
@@ -180,7 +182,7 @@ async function renderRPT04() {
       apiClient.getNotas({ periodo }),
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
-      apiClient.getConfiguracion(),
+      apiClient.getConfiguracion(periodo),
       apiClient.getEstadoCorreo(),
       obtenerMatriculasEstudiantesDeMaestro()
     ]);
@@ -301,7 +303,7 @@ async function enviarAlertasRPT04() {
       apiClient.getNotas({ periodo }),
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
-      apiClient.getConfiguracion(),
+      apiClient.getConfiguracion(periodo),
       apiClient.getNotificaciones(),
       apiClient.getEstadoCorreo(),
       obtenerMatriculasEstudiantesDeMaestro()
@@ -344,7 +346,7 @@ async function enviarAlertasRPT04() {
       }
 
       // Sin `estado`: lo decide el backend según el resultado real del envío
-      // ('Enviada' / 'Fallida' / 'Simulada').
+      // ('Enviado' / 'Fallida' / 'Simulada').
       notificaciones.push({
         id_estudiante: est.id_estudiante,
         asunto,
@@ -535,11 +537,12 @@ async function actualizarGridSemaforo() {
   const searchVal = document.getElementById('rpt05-search').value.trim().toLowerCase();
 
   try {
+    const periodo = activeFilter.periodo || await getPeriodoActivo();
     // Get all students data
     const [estudiantesAll, carreras, config, notas, asignaturas] = await Promise.all([
       apiClient.getEstudiantes(),
       apiClient.getCarreras(),
-      apiClient.getConfiguracion(),
+      apiClient.getConfiguracion(periodo),
       apiClient.getNotas(),
       apiClient.getAsignaturas()
     ]);
@@ -829,8 +832,26 @@ function actualizarTablaRPT11(asignaturas, profesores, esMaestro = false, filtro
   }).join('');
 }
 
+// Exporta lo que está pintado en #tbl-rpt11 (ya filtrado por carrera para
+// admin, o acotado a las propias materias para maestro), no el catálogo
+// completo sin filtrar.
 function exportarExcelAsignaturas() {
-  showToast('Exportación de asignaturas pendiente de implementación.', 'error');
+  const tbody = document.getElementById('tbl-rpt11');
+  const filas = tbody ? Array.from(tbody.querySelectorAll('tr')).filter(tr => !tr.querySelector('td[colspan]')) : [];
+  if (filas.length === 0) {
+    showToast('No hay asignaturas para exportar en esta vista.', 'error');
+    return;
+  }
+  const { esMaestro } = window._rpt11Data || {};
+  let csv = esMaestro
+    ? 'Codigo,Nombre,Creditos,Estado\n'
+    : 'Codigo,Nombre,Creditos,Estado,Profesor\n';
+  filas.forEach(fila => {
+    const celdas = Array.from(fila.querySelectorAll('td')).map(td => td.textContent.trim());
+    csv += celdas.map(c => `"${c.replace(/"/g, '""')}"`).join(',') + '\n';
+  });
+  downloadCSV('asignaturas.csv', csv);
+  showToast('Asignaturas exportadas en formato CSV.');
 }
 
 // ============================================================
@@ -945,6 +966,7 @@ async function cargarPensumEstudiante() {
 
     let asignaturasPensumHTML = '';
     let pendientesListHTML = '';
+    const filasParaExportar = [];
 
     listaAsignaturasParaMostrar.forEach(p => {
       const asig = asignaturas.find(a => a.codigo === p.codigo_asignatura) || { codigo: p.codigo_asignatura, nombre: p.nombre_asignatura, creditos: p.creditos };
@@ -976,6 +998,14 @@ async function cargarPensumEstudiante() {
         pendientesListHTML += `<div class="p-2.5 bg-slate-50 border rounded-xl text-xs font-bold text-slate-700">${asig.codigo} - ${asig.nombre} (${asig.creditos} CR)</div>`;
       }
 
+      filasParaExportar.push({
+        codigo: asig.codigo,
+        nombre: asig.nombre,
+        creditos: asig.creditos,
+        estado: stateLabel,
+        nota: nota ? `${nota.notaFinal.toFixed(0)} (${nota.literal})` : ''
+      });
+
       const iconSymbol = asig.fontSymbol || 'book';
       asignaturasPensumHTML += `
         <div class="border rounded-2xl p-4 flex flex-col justify-between space-y-3 transition hover:shadow-sm ${stateColor}">
@@ -997,6 +1027,8 @@ async function cargarPensumEstudiante() {
     });
 
     const porcAprobados = totalCreditosRequeridos > 0 ? (creditosAprobados / totalCreditosRequeridos) * 100 : 0;
+
+    window._rpt12Data = { est, carreraNombre, filasParaExportar, creditosAprobados, totalCreditosRequeridos, porcAprobados };
 
     document.getElementById('rpt12-contenedor-pensum').innerHTML = `
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1042,7 +1074,20 @@ async function cargarPensumEstudiante() {
 }
 
 function exportarExcelPensum() {
-  showToast('Exportación de pensum pendiente de implementación.', 'error');
+  const datos = window._rpt12Data;
+  if (!datos) {
+    showToast('Genera el mapa del pensum antes de exportar.', 'error');
+    return;
+  }
+  const { est, carreraNombre, filasParaExportar, creditosAprobados, totalCreditosRequeridos, porcAprobados } = datos;
+  let csv = `Matricula,Nombre,Carrera,Creditos Aprobados,Creditos Requeridos,Porcentaje Avance\n`;
+  csv += `${est.matricula},"${est.nombre}","${carreraNombre}",${creditosAprobados},${totalCreditosRequeridos},${porcAprobados.toFixed(2)}%\n\n`;
+  csv += `Codigo,Nombre,Creditos,Estado,Nota\n`;
+  filasParaExportar.forEach(f => {
+    csv += `${f.codigo},"${f.nombre}",${f.creditos},${f.estado},${f.nota}\n`;
+  });
+  downloadCSV(`pensum_${est.matricula}.csv`, csv);
+  showToast('Pensum exportado en formato CSV.');
 }
 
 // ============================================================
@@ -1094,11 +1139,12 @@ async function cargarIndiceYSituacionEstudiante() {
   if (!selectedStudentIndex) return;
 
   try {
+    const periodo = activeFilter.periodo || await getPeriodoActivo();
     const [estudiantes, asignaturas, notas, config] = await Promise.all([
       apiClient.getEstudiantes(),
       apiClient.getAsignaturas(),
       apiClient.getNotas({ estudiante: selectedStudentIndex }),
-      apiClient.getConfiguracion()
+      apiClient.getConfiguracion(periodo)
     ]);
 
     const est = estudiantes.find(e => e.matricula === selectedStudentIndex);
@@ -1284,13 +1330,23 @@ function actualizarCalculoSimulado() {
 }
 
 // ============================================================
-// 15. RPT-15 · BITÁCORA DE ACTIVIDAD (dbo.Log, solo admin)
+// 15. RPT-08 · BITÁCORA DE ACTIVIDAD (dbo.Log, solo admin)
+// Antes numerada RPT-15; el RPT-08 original (Reporte de
+// Importación/Exportación) se eliminó por no aportar valor real -
+// esta bitácora general (que ya incluye eventos de import/export
+// junto con el resto de la actividad CRUD) pasó a ocupar ese número.
 // ============================================================
-async function renderRPT15() {
-  tituloModulo.textContent = 'RPT-15 · Bitácora de Actividad';
+async function renderRPT08() {
+  tituloModulo.textContent = 'RPT-08 · Bitácora de Actividad';
   contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 text-sm">Cargando bitácora...</div>`;
 
   try {
+    // Mismo criterio que RPT-04/05: se respeta el filtro de ENT-06 si está
+    // configurado, si no se usa el período activo. Las filas sin período
+    // propio (MantenimientoPensum, eventos CRUD genéricos) se muestran
+    // siempre; solo se filtran las que sí traen período (import/export).
+    const periodo = activeFilter.periodo || await getPeriodoActivo();
+
     const [logs, mantenimientoPensum] = await Promise.all([
       apiClient.getLogs(),
       apiClient.getMantenimientoPensum().catch(() => [])
@@ -1298,7 +1354,7 @@ async function renderRPT15() {
 
     // Normalizamos MantenimientoPensum (bitácora específica de cambios de
     // pensum) a la misma forma que dbo.Log, para mostrar todo junto en una
-    // sola tabla en vez de mantener dos reportes separados (RPT-14/RPT-15).
+    // sola tabla en vez de mantener reportes separados.
     const pensumComoLog = (mantenimientoPensum || []).map(r => ({
       fecha: r.fecha_cambio,
       usuario: r.usuario,
@@ -1308,7 +1364,10 @@ async function renderRPT15() {
     }));
 
     const registros = [...(logs || []), ...pensumComoLog]
+      .filter(r => !r.periodo || r.periodo === periodo)
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+
+    window._rpt08Data = { registros, periodo };
 
     const filasHTML = (registros && registros.length > 0)
       ? registros.map(r => `
@@ -1330,7 +1389,15 @@ async function renderRPT15() {
 
     contenedor.innerHTML = `
       <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
-        <h3 class="font-title text-md font-bold text-slate-800 pb-4 border-b border-slate-100">Historial de actividad del sistema</h3>
+        <div class="flex justify-between items-center pb-4 border-b border-slate-100 flex-wrap gap-2">
+          <div>
+            <h3 class="font-title text-md font-bold text-slate-800">Historial de actividad del sistema</h3>
+            <p class="text-xs text-slate-400 mt-1">Período <strong class="text-slate-600">${periodo}</strong> · las filas sin período propio (cambios de pensum, eventos CRUD) se muestran siempre.</p>
+          </div>
+          <button onclick="exportarCSVRPT08()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition shadow font-title flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">table_view</span> EXPORTAR CSV
+          </button>
+        </div>
         <div class="overflow-x-auto">
           <table class="w-full text-left text-xs border-collapse">
             <thead>
@@ -1353,3 +1420,28 @@ async function renderRPT15() {
   }
 }
 
+function exportarCSVRPT08() {
+  const datos = window._rpt08Data;
+  if (!datos || datos.registros.length === 0) {
+    showToast('No hay actividad para exportar en este período.', 'error');
+    return;
+  }
+  let csv = 'Fecha,Usuario,Entidad,Accion,Descripcion\n';
+  datos.registros.forEach(r => {
+    const entidad = r.entidad || r.tipo || '';
+    const accion = r.accion || r.evento || '';
+    const descripcion = (r.descripcion || r.archivo || '').replace(/"/g, '""');
+    csv += `${new Date(r.fecha).toLocaleString()},${r.usuario || ''},${entidad},${accion},"${descripcion}"\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  link.setAttribute('href', url);
+  link.setAttribute('download', `rpt08_bitacora_actividad_${datos.periodo}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// ============================================================

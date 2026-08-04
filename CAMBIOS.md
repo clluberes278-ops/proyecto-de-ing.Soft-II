@@ -113,3 +113,50 @@ npm run dev
 - `taskuni-backend/api-client.js` (archivo muerto en raiz).
 - `taskuni/js/{login,core,app}.js` (legacy, no se cargan).
 - BD: schema sin cambios. Asignatura basura "POP-234" y facultades casi duplicadas siguen en los datos semilla.
+
+---
+
+## Adenda 2026-08-04: RPT-08 reactivado, enum de Notificacion.estado normalizado
+
+Auditoria contra el documento de diseño (diccionario de datos) encontro que la tabla `Log` ya existe en el schema (con `usuario`/`entidad`/`accion`/`descripcion` via `ALTER TABLE`), asi que la razon original para eliminar RPT-08 ya no aplica.
+
+- **RPT-08 reactivado**: `renderRPT08()` (nuevo, en `taskuni/js/dashboard-rpt.js`, no en el `dashboard-2.js` legacy) filtra `apiClient.getLogs()` a `tipo IN ('IMPORTACIÓN','EXPORTACIÓN')`. Reconectado en `dashboard-core.js`: `case 'rpt08'`, `VISTAS_POR_ROL.admin`, y entrada de menu admin. Queda separado de RPT-15 (bitácora general de CRUD + import/export + pensum) a proposito — cada uno tiene su alcance.
+- **Enum de `Notificacion.estado` normalizado**: `mailer.js` devolvia `'Enviada'` pero el `DEFAULT` de la columna en `schema.sql` es `'Enviado'` (y asi lo nombra el diccionario de datos). Cambiado `mailer.js`, `server.js` (conteo del resumen) y `test-correo.js` a `'Enviado'` para que todos coincidan. `'Fallida'`/`'Simulada'` se mantienen: son extensiones legitimas del modo simulacion SMTP, no error de tipeo — el diccionario de datos deberia documentarlas junto a `Enviado`/`Pendiente`.
+
+### Adenda 2026-08-04 (cont.): filtro de período y export CSV en RPT-08/RPT-15
+
+RPT-08 no respetaba el filtro de ENT-06 (a diferencia de RPT-04/RPT-05, que ya usan `activeFilter.periodo || await getPeriodoActivo()`), y ni RPT-08 ni RPT-15 tenían botón de exportar como sí tienen RPT-01/RPT-11/RPT-12.
+
+- `renderRPT08()`: ahora filtra los logs por `periodo` resuelto igual que RPT-04/05; subtítulo muestra el período activo; nuevo botón `EXPORTAR CSV` (`exportarCSVRPT08()`) sobre la tabla ya filtrada. Se eliminó `obtenerPeriodoActivoRPT08()` (duplicaba `getPeriodoActivo()`, ya compartida con RPT-04/05).
+- `renderRPT15()`: mismo filtro de período, pero las filas sin período propio (`MantenimientoPensum`, eventos CRUD genéricos) se muestran siempre — solo se filtran las filas que sí traen `periodo` (import/export). Nuevo botón `EXPORTAR CSV` (`exportarCSVRPT15()`).
+- Nota aparte confirmada durante esta auditoría: `downloadCSV()` en `dashboard-core.js` (la función real que usa la app, no la de `core.js`, que es legacy/no se carga) ya registra cada exportación en el `Log` real vía `apiClient.registrarLog()` — por eso los EXPORTAR EXCEL/PDF de otros reportes ya aparecen en RPT-08/RPT-15 sin cambios adicionales.
+
+### Adenda 2026-08-04 (cont. 2): quitados los botones "SIMULAR IMPORTACIÓN/EXPORTACIÓN" de RPT-08
+
+Eran puro atrezzo heredado del `dashboard-2.js` legacy: pedían un nombre de archivo por `prompt()` y generaban un número aleatorio de "registros" con `Math.random()`, sin procesar ningún archivo real. No tenían sentido porque taskUni no tiene ninguna función real de importación (no existe endpoint que suba un Excel/CSV). Se eliminaron `simularImportacionExcel()` y `simularExportacion()` de `dashboard-rpt.js`. RPT-08 queda solo como tabla de auditoría real (alimentada por las exportaciones reales de otros reportes vía `downloadCSV()`) + su botón `EXPORTAR CSV`.
+
+### Adenda 2026-08-04 (cont. 3): implementados de verdad `exportarExcelAsignaturas()` y `exportarExcelPensum()`
+
+Eran stubs que solo mostraban `showToast('...pendiente de implementación.', 'error')` — RPT-11 y RPT-12 nunca alimentaban RPT-08 aunque tuvieran botón "EXPORTAR EXCEL".
+
+- `exportarExcelAsignaturas()` (RPT-11): exporta lo que está pintado en `#tbl-rpt11` (ya filtrado por carrera para admin, o acotado a sus materias para maestro) vía `downloadCSV()`.
+- `exportarExcelPensum()` (RPT-12): `cargarPensumEstudiante()` ahora guarda `window._rpt12Data` (estudiante, carrera, filas del pensum con estado/nota, créditos aprobados/requeridos, % avance) mientras arma el HTML; el export usa esos mismos datos vía `downloadCSV()`.
+- Ambos quedan registrados como `EXPORTACIÓN`/`EXPORTACION_COMPLETADA` en `dbo.Log` igual que el boletín (RPT-01) y el acta (ENT-07), así que ahora sí alimentan RPT-08 de forma realista.
+
+### Adenda 2026-08-04 (cont. 4): `ConfiguracionUmbral` ahora sí se guarda/filtra por `id_periodo`
+
+La columna `id_periodo` existía en el schema y en el diagrama ER desde siempre, pero `routes/configuracion.js` la ignoraba por completo: el `GET` devolvía la primera fila de la tabla sin `WHERE`, y el `PUT` hacía `IF EXISTS (SELECT 1 FROM ConfiguracionUmbral) UPDATE ELSE INSERT` sin tocar `id_periodo` — solo podía existir una fila "global" para toda la universidad, sin importar el período. Confirmado con un dump real de la BD: `ConfiguracionUmbral` tenía 0 filas.
+
+- `routes/configuracion.js` `GET /`: acepta `?periodo=X`; busca primero la fila de ese período (`JOIN Periodo`), si no existe cae a la fila global (`id_periodo IS NULL`), y si tampoco existe usa el fallback hardcodeado de siempre.
+- `routes/configuracion.js` `PUT /`: acepta `periodo` en el body; resuelve su `id_periodo` contra la tabla `Periodo` y hace el upsert (`EXISTS`/`UPDATE`/`INSERT`) acotado a ese `id_periodo` (o a `NULL` si no se manda período, para no romper compatibilidad).
+- `api-client.js`: `getConfiguracion(periodo)` ahora acepta el período como query param.
+- Todos los llamadores en vivo (`dashboard-core.js` renderInicio, `dashboard-rpt.js` RPT-04/05/13, `dashboard-ent.js` ENT-08) ahora resuelven `activeFilter.periodo || await getPeriodoActivo()` y se lo pasan a `getConfiguracion()`/`updateConfiguracion()`. ENT-08 además muestra en el subtítulo para qué período se está configurando.
+
+### Adenda 2026-08-04 (cont. 5): RPT-08 (import/export) eliminado; RPT-15 (Bitácora de Actividad) pasa a ocupar el número RPT-08
+
+El usuario, tras probarlo exportando datos reales, concluyó que RPT-08 (Reporte de Importación/Exportación) no aportaba nada que no estuviera ya cubierto por RPT-15 — su alcance (solo filas `tipo IN ('IMPORTACIÓN','EXPORTACIÓN')`) es un subconjunto estricto de lo que ya muestra RPT-15 (todo `dbo.Log` + `MantenimientoPensum`).
+
+- Eliminados de `dashboard-rpt.js`: `renderRPT08()` (versión import/export), `exportarCSVRPT08()` (versión import/export). Ninguna otra vista dependía de ellos.
+- `renderRPT15()` → renombrado a `renderRPT08()` (mismo cuerpo, mismo filtro por período, misma tabla combinada Log+MantenimientoPensum). `window._rpt15Data` → `window._rpt08Data`. `exportarCSVRPT15()` → `exportarCSVRPT08()`. Título de la vista: "RPT-08 · Bitácora de Actividad".
+- `dashboard-core.js`: `case 'rpt15'` eliminado del switch (ya no existe esa vista); `case 'rpt08'` ahora llama a la bitácora general. `VISTAS_POR_ROL.admin` y el ítem del menú lateral actualizados a un solo `rpt08` (antes eran dos entradas separadas, `rpt08` e `rpt15`).
+- `dashboard-2.js` (legacy, no se carga) conserva su propio `renderRPT08()` viejo — no se tocó, es código muerto.

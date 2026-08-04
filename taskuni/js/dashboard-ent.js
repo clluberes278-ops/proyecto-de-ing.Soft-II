@@ -1799,13 +1799,14 @@ async function simularEnviarAlertas() {
 // ============================================================
 async function renderENT08() {
   tituloModulo.textContent = 'ENT-08 · Configuración de Umbrales';
-  const config = await apiClient.getConfiguracion();
+  const periodo = activeFilter.periodo || await getPeriodoActivo();
+  const config = await apiClient.getConfiguracion(periodo);
 
   contenedor.innerHTML = `
     <div class="max-w-2xl bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
       <div class="pb-3 border-b border-slate-100">
         <h3 class="font-title text-lg font-bold text-slate-800">Parámetros de Semáforo</h3>
-        <p class="text-xs text-slate-400 mt-1">Ajusta los umbrales requeridos de índice acumulado.</p>
+        <p class="text-xs text-slate-400 mt-1">Ajusta los umbrales requeridos de índice acumulado para el período <strong class="text-slate-600">${periodo}</strong>.</p>
       </div>
       <form id="form-ent08" class="space-y-6">
         <div class="grid grid-cols-2 gap-4">
@@ -1854,8 +1855,8 @@ async function renderENT08() {
       return;
     }
     try {
-      await apiClient.updateConfiguracion({ verde, amarillo });
-      showToast('Umbrales de semaforización guardados.');
+      await apiClient.updateConfiguracion({ verde, amarillo, periodo });
+      showToast(`Umbrales de semaforización guardados para el período ${periodo}.`);
     } catch (error) {
       showToast('Error: ' + error.message, 'error');
     }
@@ -1864,7 +1865,8 @@ async function renderENT08() {
 
 async function restaurarConfigUmbrales() {
   try {
-    await apiClient.updateConfiguracion({ verde: 3.2, amarillo: 2.5 });
+    const periodo = activeFilter.periodo || await getPeriodoActivo();
+    await apiClient.updateConfiguracion({ verde: 3.2, amarillo: 2.5, periodo });
     showToast('Configuración restaurada.');
     renderENT08();
   } catch (error) {
