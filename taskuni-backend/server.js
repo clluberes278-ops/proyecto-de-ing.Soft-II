@@ -25,6 +25,7 @@ const seccionesEstudiantesRouter = require('./routes/secciones-estudiantes');   
 const carrerasRouter = require('./routes/carreras'); // NUEVO
 const mailRouter = require('./routes/mail'); // NUEVO
 const mantenimientoPensumRouter = require('./routes/mantenimiento-pensum'); // NUEVO
+const tareasRouter = require('./routes/tareas'); // NUEVO
 
 // Envío de correo para las alertas de RPT-04. Si el .env no trae credenciales
 // SMTP, el módulo entra en modo simulación en vez de romper el endpoint.
@@ -101,6 +102,7 @@ app.use('/api/secciones', seccionesEstudiantesRouter);
 app.use('/api/carreras', carrerasRouter); // NUEVO
 app.use('/api/mail', mailRouter); // NUEVO
 app.use('/api/mantenimiento-pensum', mantenimientoPensumRouter); // NUEVO
+app.use('/api/tareas', tareasRouter); // NUEVO
 // ============================================================================
 // ============================================================================
 // ENDPOINTS DE AUTENTICACIÓN

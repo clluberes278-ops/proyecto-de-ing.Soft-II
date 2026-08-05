@@ -199,7 +199,7 @@ const VISTAS_POR_ROL = {
   admin: ['inicio', 'ent01', 'ent02', 'ent03', 'ent04', 'ent05', 'ent06', 'ent07', 'ent08', 'ent09', 'ent10',
     'rpt01', 'rpt04', 'rpt05', 'rpt06', 'rpt07', 'rpt08', 'rpt11', 'rpt12', 'rpt13'],
   maestro: ['inicio', 'ent06', 'ent07', 'rpt04', 'rpt06', 'rpt07', 'rpt11'],
-  estudiante: ['inicio', 'ent11', 'rpt01', 'rpt05', 'rpt06', 'rpt07', 'rpt12', 'rpt13']
+  estudiante: ['inicio', 'ent11', 'ent18', 'rpt01', 'rpt05', 'rpt06', 'rpt07', 'rpt12', 'rpt13']
 };
 
 function renderAccesoDenegado(viewName) {
@@ -246,6 +246,7 @@ async function renderView(viewName) {
     case 'ent09': await renderENT09(); break;
     case 'ent10': await renderENT10(); break;
     case 'ent11': await renderENT11(); break;
+    case 'ent18': await renderENT18(); break;
     case 'rpt01': await renderRPT01(); break;
     case 'rpt04': await renderRPT04(); break;
     case 'rpt05': await renderRPT05(); break;
@@ -519,6 +520,7 @@ function generarMenuLateral(rol) {
     items.push(
       { header: 'Mi Seguimiento' },
       { id: 'ent11', label: '<span class="material-symbols-outlined text-base">edit_calendar</span> Inscripción de Materias', action: 'ent11' },
+      { id: 'ent18', label: '<span class="material-symbols-outlined text-base">task_alt</span> Mis Tareas', action: 'ent18' },
       { id: 'rpt01', label: '<span class="material-symbols-outlined text-base">badge</span> Mi Boletín Oficial', action: 'rpt01' },
       { id: 'rpt12', label: '<span class="material-symbols-outlined text-base">donut_large</span> Mi Pensum', action: 'rpt12' },
       { id: 'rpt13', label: '<span class="material-symbols-outlined text-base">monitoring</span> Mi Índice / Simulador', action: 'rpt13' },

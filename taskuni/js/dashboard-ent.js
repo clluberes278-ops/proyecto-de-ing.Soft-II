@@ -2071,4 +2071,233 @@ async function darseDeBaja(idSeccion, matricula) {
   }
 }
 
+// ============================================================
+// ENT-18: GESTIÓN DE TAREAS ACADÉMICAS
+// Autoservicio del estudiante: CRUD de tareas asociadas a una
+// asignatura y a una fecha/hora límite. No incluye el servicio
+// de recordatorios (48h/24h/1h) descrito en RF-26.
+// ============================================================
+let tareaEstudianteActual = null;
+let tareaEditandoId = null;
+
+async function renderENT18() {
+  tituloModulo.textContent = 'ENT-18 · Gestión de Tareas Académicas';
+
+  if (currentUser.rol !== 'estudiante') {
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 italic">Este módulo es de autoservicio para estudiantes.</div>`;
+    return;
+  }
+
+  contenedor.innerHTML = `<div class="text-center text-slate-400 italic py-10">Cargando tus datos...</div>`;
+
+  let estudiantes, asignaturas;
+  try {
+    [estudiantes, asignaturas] = await Promise.all([
+      apiClient.getEstudiantes(),
+      apiClient.getAsignaturas()
+    ]);
+  } catch (error) {
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-rose-100 text-rose-500 text-center">Error al cargar datos: ${error.message}</div>`;
+    return;
+  }
+
+  const yo = estudiantes.find(e => e.correo === currentUser.usuario);
+  if (!yo) {
+    contenedor.innerHTML = `<div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center text-slate-400 italic">No encontramos tu registro de estudiante asociado a este correo. Contacta a administración.</div>`;
+    return;
+  }
+  tareaEstudianteActual = yo;
+  tareaEditandoId = null;
+
+  contenedor.innerHTML = `
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm self-start">
+        <h3 id="ent18-form-titulo" class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
+          <span class="material-symbols-outlined text-emerald-600">post_add</span> Nueva Tarea
+        </h3>
+        <form id="form-ent18" class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Título</label>
+            <input type="text" id="ent18-titulo" placeholder="ej: Entregar informe de laboratorio" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" required>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Descripción</label>
+            <textarea id="ent18-descripcion" rows="3" placeholder="Detalle del trabajo a realizar" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Asignatura</label>
+            <select id="ent18-asignatura" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+              <option value="">Sin asignatura específica</option>
+              ${asignaturas.map(a => `<option value="${a.id_asignatura || a.id}">${a.codigo || a.codigo_asignatura} · ${a.nombre || a.nombre_asignatura}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Fecha y hora límite</label>
+            <input type="datetime-local" id="ent18-fecha-limite" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" required>
+          </div>
+          <div class="flex gap-2">
+            <button type="submit" id="ent18-submit-btn" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg transition shadow shadow-emerald-600/10 font-title">Guardar Tarea</button>
+            <button type="button" id="ent18-cancelar-btn" onclick="cancelarEdicionTarea()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm rounded-lg transition font-title hidden">Cancelar</button>
+          </div>
+        </form>
+      </div>
+      <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col">
+        <h3 class="font-title text-lg font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100">Mis Tareas</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase">
+                <th class="p-3">Título</th>
+                <th class="p-3">Asignatura</th>
+                <th class="p-3">Fecha límite</th>
+                <th class="p-3">Estado</th>
+                <th class="p-3 text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbl-tareas"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('form-ent18').addEventListener('submit', guardarTarea);
+  await actualizarTablaTareas();
+}
+
+async function actualizarTablaTareas() {
+  const tbody = document.getElementById('tbl-tareas');
+  if (!tbody || !tareaEstudianteActual) return;
+  try {
+    const tareas = await apiClient.getTareas(tareaEstudianteActual.matricula);
+    if (tareas.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No tienes tareas registradas.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = tareas.map(t => {
+      const vencida = new Date(t.fechaLimite) < new Date() && t.estado === 'Pendiente';
+      const estadoMostrado = vencida ? 'Vencida' : t.estado;
+      const colorEstado = estadoMostrado === 'Entregada' ? 'bg-emerald-100 text-emerald-800'
+        : estadoMostrado === 'Vencida' ? 'bg-rose-100 text-rose-800'
+        : 'bg-amber-100 text-amber-800';
+      const fecha = new Date(t.fechaLimite).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' });
+      return `
+        <tr class="border-b border-slate-100 hover:bg-slate-50/50 transition">
+          <td class="p-3 font-semibold text-slate-800">${t.titulo}<span class="block text-[10px] text-slate-400 font-normal">${t.descripcion || ''}</span></td>
+          <td class="p-3 text-slate-500 font-medium">${t.codigoAsignatura || '— sin asignatura —'}</td>
+          <td class="p-3 font-mono text-slate-600">${fecha}</td>
+          <td class="p-3"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${colorEstado}">${estadoMostrado}</span></td>
+          <td class="p-3 text-right whitespace-nowrap">
+            <button onclick="editarTarea(${t.id_tarea})" class="p-1 text-slate-400 hover:text-emerald-600 rounded transition">
+              <span class="material-symbols-outlined text-base">edit</span>
+            </button>
+            <button onclick="marcarTareaEntregada(${t.id_tarea})" class="p-1 text-slate-400 hover:text-emerald-600 rounded transition" title="Marcar como entregada">
+              <span class="material-symbols-outlined text-base">check_circle</span>
+            </button>
+            <button onclick="eliminarTarea(${t.id_tarea})" class="p-1 text-slate-400 hover:text-rose-500 rounded transition">
+              <span class="material-symbols-outlined text-base">delete</span>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+    // Guardamos las tareas cargadas para poder rellenar el formulario al editar
+    // sin volver a pedirlas al backend.
+    actualizarTablaTareas._cache = tareas;
+  } catch (error) {
+    showToast('Error al cargar tareas: ' + error.message, 'error');
+  }
+}
+
+async function guardarTarea(e) {
+  e.preventDefault();
+  const titulo = document.getElementById('ent18-titulo').value.trim();
+  const descripcion = document.getElementById('ent18-descripcion').value.trim();
+  const idAsignatura = document.getElementById('ent18-asignatura').value || null;
+  const fechaLimite = document.getElementById('ent18-fecha-limite').value;
+
+  if (!titulo) {
+    showToast('El título es obligatorio.', 'error');
+    return;
+  }
+  if (!fechaLimite || new Date(fechaLimite) <= new Date()) {
+    showToast('La fecha límite debe ser posterior a la fecha actual.', 'error');
+    return;
+  }
+
+  try {
+    if (tareaEditandoId) {
+      await apiClient.actualizarTarea(tareaEditandoId, { idAsignatura, titulo, descripcion, fechaLimite });
+      showToast('Tarea actualizada con éxito.', 'success');
+    } else {
+      await apiClient.crearTarea({ idEstudiante: tareaEstudianteActual.id_estudiante || tareaEstudianteActual.matricula, idAsignatura, titulo, descripcion, fechaLimite });
+      showToast('Tarea registrada con éxito.', 'success');
+    }
+    cancelarEdicionTarea();
+    await actualizarTablaTareas();
+  } catch (error) {
+    showToast('Error al guardar la tarea: ' + error.message, 'error');
+  }
+}
+
+function editarTarea(idTarea) {
+  const tarea = (actualizarTablaTareas._cache || []).find(t => t.id_tarea === idTarea);
+  if (!tarea) return;
+
+  tareaEditandoId = idTarea;
+  document.getElementById('ent18-form-titulo').innerHTML = `<span class="material-symbols-outlined text-emerald-600">edit</span> Editar Tarea`;
+  document.getElementById('ent18-titulo').value = tarea.titulo;
+  document.getElementById('ent18-descripcion').value = tarea.descripcion || '';
+  document.getElementById('ent18-asignatura').value = tarea.id_asignatura || '';
+  // datetime-local espera "YYYY-MM-DDTHH:mm" sin zona horaria.
+  const fecha = new Date(tarea.fechaLimite);
+  const offsetMin = fecha.getTimezoneOffset();
+  const local = new Date(fecha.getTime() - offsetMin * 60000);
+  document.getElementById('ent18-fecha-limite').value = local.toISOString().slice(0, 16);
+  document.getElementById('ent18-submit-btn').textContent = 'Actualizar Tarea';
+  document.getElementById('ent18-cancelar-btn').classList.remove('hidden');
+  document.getElementById('ent18-titulo').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelarEdicionTarea() {
+  tareaEditandoId = null;
+  const form = document.getElementById('form-ent18');
+  if (form) form.reset();
+  const titulo = document.getElementById('ent18-form-titulo');
+  if (titulo) titulo.innerHTML = `<span class="material-symbols-outlined text-emerald-600">post_add</span> Nueva Tarea`;
+  const submitBtn = document.getElementById('ent18-submit-btn');
+  if (submitBtn) submitBtn.textContent = 'Guardar Tarea';
+  const cancelarBtn = document.getElementById('ent18-cancelar-btn');
+  if (cancelarBtn) cancelarBtn.classList.add('hidden');
+}
+
+async function marcarTareaEntregada(idTarea) {
+  const tarea = (actualizarTablaTareas._cache || []).find(t => t.id_tarea === idTarea);
+  if (!tarea) return;
+  try {
+    await apiClient.actualizarTarea(idTarea, {
+      idAsignatura: tarea.id_asignatura,
+      titulo: tarea.titulo,
+      descripcion: tarea.descripcion,
+      fechaLimite: tarea.fechaLimite,
+      estado: 'Entregada'
+    });
+    showToast('Tarea marcada como entregada.', 'success');
+    await actualizarTablaTareas();
+  } catch (error) {
+    showToast('Error al actualizar la tarea: ' + error.message, 'error');
+  }
+}
+
+async function eliminarTarea(idTarea) {
+  if (!confirm('¿Eliminar esta tarea?')) return;
+  try {
+    await apiClient.eliminarTarea(idTarea);
+    showToast('Tarea eliminada.');
+    await actualizarTablaTareas();
+  } catch (error) {
+    showToast('Error al eliminar: ' + error.message, 'error');
+  }
+}
+
 

@@ -589,6 +589,56 @@ const apiClient = (() => {
     }
 
     // ========================================================================
+    // MÉTODOS PÚBLICOS - TAREAS ACADÉMICAS (ENT-18)
+    // ========================================================================
+
+    /**
+     * Obtener las tareas de un estudiante
+     * @param {number|string} idEstudiante - id numérico o matrícula
+     * @returns {Promise<Array>}
+     */
+    async function getTareas(idEstudiante) {
+        const response = await makeRequest(`/tareas?estudiante=${encodeURIComponent(idEstudiante)}`);
+        return response.data;
+    }
+
+    /**
+     * Crear una nueva tarea académica
+     * @param {Object} data - { idEstudiante, idAsignatura, titulo, descripcion, fechaLimite }
+     * @returns {Promise<Object>}
+     */
+    async function crearTarea(data) {
+        return await makeRequest('/tareas', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    }
+
+    /**
+     * Actualizar una tarea existente
+     * @param {number} id - id_tarea
+     * @param {Object} data - { idAsignatura, titulo, descripcion, fechaLimite, estado }
+     * @returns {Promise<Object>}
+     */
+    async function actualizarTarea(id, data) {
+        return await makeRequest(`/tareas/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    }
+
+    /**
+     * Eliminar una tarea
+     * @param {number} id - id_tarea
+     * @returns {Promise<Object>}
+     */
+    async function eliminarTarea(id) {
+        return await makeRequest(`/tareas/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
+    // ========================================================================
     // EXPORTAR API PÚBLICA
     // ========================================================================
 
@@ -662,6 +712,11 @@ const apiClient = (() => {
         getPensum,
         getPensumPorEstudiante,
         getMantenimientoPensum,
+        // Tareas académicas
+        getTareas,
+        crearTarea,
+        actualizarTarea,
+        eliminarTarea,
     };
 })();
 
